@@ -31,6 +31,19 @@ test('unknown operations are denied before tool execution', async () => {
   assert.equal(decision.kind, 'deny');
 });
 
+test('tenant-wide collector-account reads are excluded from DSH operations', async () => {
+  assert.equal(catalog.operations.get_collector_accounts, undefined);
+  assert.ok(catalog.excluded.some((operation) =>
+    operation.path === '/collector-accounts'
+      && operation.reason.includes('超出 GEO 运营 Agent 的项目范围')));
+
+  const decision = await geoApprovalDecision({
+    name: 'geo_api',
+    arguments: { operation: 'get_collector_accounts' },
+  }, async () => ({ kind: 'allow' }));
+  assert.equal(decision.kind, 'deny');
+});
+
 test('GEO evidence upload is an explicit approved tool and cannot use the generic JSON route', async () => {
   const denied = await geoApprovalDecision({ name: 'geo_api', arguments: { operation: 'post_evidence_sources_upload' } }, async () => ({ kind: 'allow' }));
   assert.equal(denied.kind, 'deny');

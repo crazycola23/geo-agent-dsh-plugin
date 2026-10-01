@@ -7178,45 +7178,6 @@
       "requestBody": null,
       "hasJsonResponse": true
     },
-    "get_collector_accounts": {
-      "name": "get_collector_accounts",
-      "method": "GET",
-      "path": "/collector-accounts",
-      "tag": "detect",
-      "summary": "全租户采集账号绑定明细（治理视图）",
-      "description": "本批新增，用于把原先「任何 `geo:detect:view` 都能读到全部账号明细」的越权面\n收拢到独立权限码下。返回 OneGl 账号健康度透传值，不返回任何凭据。\n",
-      "permission": "geo:collector:account:admin",
-      "idempotencyRule": null,
-      "parameters": [
-        {
-          "name": "pageNum",
-          "in": "query",
-          "required": false,
-          "description": "",
-          "schema": {
-            "type": "integer",
-            "default": 1
-          },
-          "style": "form",
-          "explode": true
-        },
-        {
-          "name": "pageSize",
-          "in": "query",
-          "required": false,
-          "description": "",
-          "schema": {
-            "type": "integer",
-            "default": 10,
-            "maximum": 100
-          },
-          "style": "form",
-          "explode": true
-        }
-      ],
-      "requestBody": null,
-      "hasJsonResponse": true
-    },
     "post_onegl_auth_sessions": {
       "name": "post_onegl_auth_sessions",
       "method": "POST",
@@ -10685,6 +10646,12 @@
       "path": "/budget/approvals",
       "summary": "预算放行 / 申请放行（M15）",
       "reason": "cost 写操作不属于 GEO 运营 Agent 的职责"
+    },
+    {
+      "method": "GET",
+      "path": "/collector-accounts",
+      "summary": "全租户采集账号绑定明细（治理视图）",
+      "reason": "全租户采集账号明细超出 GEO 运营 Agent 的项目范围"
     }
   ]
 }

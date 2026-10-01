@@ -23,6 +23,10 @@ const deniedPathPatterns = [
   { pattern: /\/send-external(?:\/|$)/i, reason: '客户外发不属于内部 GEO 运营工具' },
 ];
 
+const deniedPermissionCodes = new Map([
+  ['geo:collector:account:admin', '全租户采集账号明细超出 GEO 运营 Agent 的项目范围'],
+]);
+
 function pointer(document, ref) {
   if (!ref.startsWith('#/')) throw new Error(`External OpenAPI ref is unsupported: ${ref}`);
   return ref.slice(2).split('/').map(part => part.replaceAll('~1', '/').replaceAll('~0', '~'))
@@ -107,6 +111,10 @@ function generate(document, specText) {
         ? null
         : deniedPathPatterns.find(entry => entry.pattern.test(path));
       if (denied) reason = denied.reason;
+      const permissionCode = raw['x-permission'] || null;
+      if (!reason && deniedPermissionCodes.has(permissionCode)) {
+        reason = deniedPermissionCodes.get(permissionCode);
+      }
       if (!reason && (tag === 'audit' || tag === 'cost') && method.toLowerCase() !== 'get') {
         reason = `${tag} 写操作不属于 GEO 运营 Agent 的职责`;
       }
@@ -136,7 +144,7 @@ function generate(document, specText) {
         tag,
         summary: raw.summary || `${method.toUpperCase()} ${path}`,
         description: raw.description || '',
-        permission: raw['x-permission'] || null,
+        permission: permissionCode,
         idempotencyRule: raw['x-idempotencyKey'] || null,
         parameters,
         requestBody: request,
