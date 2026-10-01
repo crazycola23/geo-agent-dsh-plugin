@@ -4,6 +4,8 @@ import { dirname, resolve } from 'node:path';
 import { defineTool } from '@deepseek-ai/dsh-tools';
 import { createGeoAuthProvider, executeWithGeoMachineToken } from './auth-provider.js';
 import { executeGeoOperation, executeGeoEvidenceUpload, listStagedEvidenceFiles, describeOperation, isWriteOperation } from './api-client.js';
+import { Config, pluginSettings } from './config.js';
+import { resolveProjectSelection } from './project-context.js';
 import { schemaSummary } from './schema.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -35,6 +37,7 @@ function approvalArgumentSummary(args) {
     if (args?.[key] !== undefined) summary[key] = summarizeApprovalValue(args[key]);
   }
   if (args?.idempotencyKey !== undefined) summary.idempotencyKey = summarizeApprovalValue(args.idempotencyKey);
+  if (args?.projectId !== undefined) summary.projectId = summarizeApprovalValue(args.projectId);
   return JSON.stringify(summary).slice(0, 1_200);
 }
 
@@ -74,29 +77,24 @@ function jsonOutput() {
   };
 }
 
-function pluginSettings(config) {
-  const baseUrl = typeof config?.apiBaseUrl === 'string' ? config.apiBaseUrl : process.env.GEO_API_BASE_URL;
-  const evidenceDirectory = typeof config?.evidenceDirectory === 'string' ? config.evidenceDirectory : process.env.GEO_EVIDENCE_DIRECTORY;
-  const timeout = Number(config?.timeoutMs);
-  return { baseUrl, evidenceDirectory, timeoutMs: Number.isFinite(timeout) && timeout >= 1_000 && timeout <= 120_000 ? timeout : 30_000 };
-}
-
 export const name = '@geo-internal/geo-agent-dsh-plugin';
 export const inject = ['tools', 'credentials', 'agents'];
+export { Config };
 
 export function apply(ctx, config = {}) {
   if (!ctx.tools?.register || !ctx.agents?.list || typeof ctx.on !== 'function' || typeof ctx.effect !== 'function') {
     throw new Error('GEO DSH plugin requires the DSH 0.2.0-rc.2 tools and agents runtimes, effect lifecycle, and event hooks');
   }
 
-  const settings = pluginSettings(config);
-  const auth = createGeoAuthProvider({ credentials: ctx.credentials, baseUrl: settings.baseUrl, timeoutMs: settings.timeoutMs });
+  const currentSettings = () => pluginSettings(config);
+  const auth = createGeoAuthProvider({ credentials: ctx.credentials, getSettings: currentSettings });
 
   ctx.tools.register(defineTool({
     name: 'geo_api',
-    description: 'Call one fixed GEO API operation from the generated OpenAPI allowlist. Use geo_describe_operation first when you need exact path/query/body fields. The GEO backend authenticates and authorizes every operation. Every non-GET request is shown to the operator for DSH approval before dispatch. Never repeat a call with unknown outcome until the matching GEO object or order has been checked.',
+    description: 'Call one fixed GEO API operation from the generated OpenAPI allowlist. projectId selects that project’s dedicated machine credentials and Bearer token; if the operation also carries projectId in path/query/body, it must match. Use geo_describe_operation first when you need exact request fields. Every non-GET request is shown to the operator for DSH approval before dispatch. Never repeat a call with unknown outcome until the matching GEO object or order has been checked.',
     parameters: {
       operation: { type: 'string', enum: operationNames, required: true, description: 'Exact operation name from the generated GEO OpenAPI catalog.' },
+      projectId: { type: 'string', required: true, description: 'GEO project whose configured machine client supplies the Bearer token. Match any projectId included in the operation request. This selector is not sent as an extra GEO field.' },
       pathParams: { type: 'json', description: 'JSON object containing only the path parameters declared by this operation.' },
       query: { type: 'json', description: 'JSON object containing only query parameters declared by this operation.' },
       body: { type: 'json', description: 'Application/json request body matching the current canonical GEO OpenAPI schema.' },
@@ -104,7 +102,11 @@ export function apply(ctx, config = {}) {
     },
     output: jsonOutput(),
     async execute(args, exec) {
-      return executeWithGeoMachineToken(auth, token => executeGeoOperation({ catalog, operationName: args.operation, args, baseUrl: settings.baseUrl, token, signal: exec.signal, timeoutMs: settings.timeoutMs }));
+      const settings = currentSettings();
+      const selection = resolveProjectSelection(args.projectId, args);
+      if (!selection.ok) return { ok: false, outcome: 'rejected', error: selection.error };
+      const { projectId: _authProjectId, ...requestArgs } = args;
+      return executeWithGeoMachineToken(auth, selection.projectId, token => executeGeoOperation({ catalog, operationName: args.operation, args: requestArgs, baseUrl: settings.baseUrl, token, signal: exec.signal, timeoutMs: settings.timeoutMs }), settings);
     },
   }));
 
@@ -130,7 +132,7 @@ export function apply(ctx, config = {}) {
     parameters: {},
     output: jsonOutput(),
     async execute() {
-      return listStagedEvidenceFiles(settings.evidenceDirectory);
+      return listStagedEvidenceFiles(currentSettings().evidenceDirectory);
     },
   }));
 
@@ -145,18 +147,24 @@ export function apply(ctx, config = {}) {
     },
     output: jsonOutput(),
     async execute(args, exec) {
-      return executeWithGeoMachineToken(auth, token => executeGeoEvidenceUpload({ catalog, args, evidenceDirectory: settings.evidenceDirectory, baseUrl: settings.baseUrl, token, signal: exec.signal, timeoutMs: settings.timeoutMs }));
+      const settings = currentSettings();
+      return executeWithGeoMachineToken(auth, args.projectId, token => executeGeoEvidenceUpload({ catalog, args, evidenceDirectory: settings.evidenceDirectory, baseUrl: settings.baseUrl, token, signal: exec.signal, timeoutMs: settings.timeoutMs }), settings);
     },
   }));
 
   ctx.tools.register(defineTool({
     name: 'geo_connection_status',
-    description: 'Authenticate the configured GEO machine client and report its bound service account and token expiry without displaying or returning the access token.',
-    parameters: {},
+    description: 'Authenticate one configured GEO project machine client and report its bound service account and token expiry without displaying or returning the access token.',
+    parameters: {
+      projectId: { type: 'string', required: true, description: 'Configured GEO project whose machine client should be tested.' },
+    },
     output: jsonOutput(),
-    async execute() {
-      const authStatus = await auth.status();
+    async execute({ projectId }) {
+      const settings = currentSettings();
+      const authStatus = await auth.status(projectId, settings);
       return {
+        projectId: authStatus.projectId,
+        projectConfigured: authStatus.projectConfigured,
         baseUrlConfigured: typeof settings.baseUrl === 'string' && settings.baseUrl.length > 0,
         machineCredentialsConfigured: authStatus.configured,
         authenticated: authStatus.authenticated,

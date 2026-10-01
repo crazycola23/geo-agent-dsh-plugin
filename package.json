@@ -6,34 +6,58 @@
   "type": "module",
   "main": "./src/index.js",
   "exports": {
-    ".": "./src/index.js"
+    ".": "./src/index.js",
+    "./client": "./lib/client.js"
   },
   "files": [
     "cordis.patch.yml",
     "src/index.js",
+    "src/config.js",
     "src/auth-provider.js",
+    "src/project-context.js",
     "src/api-client.js",
     "src/schema.js",
-    "src/generated/openapi.catalog.json"
+    "src/generated/openapi.catalog.json",
+    "src/client",
+    "lib/client.js",
+    "tsdown.client.config.ts"
   ],
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-api-remotes",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-client-ui-slots"
+      ]
     }
   },
   "scripts": {
+    "build:client": "tsdown -c ./tsdown.client.config.ts",
     "generate:catalog": "node ./scripts/generate-catalog.mjs",
+    "prepack": "npm run build:client",
     "test": "node --test",
     "validate": "node ./scripts/validate-catalog.mjs"
   },
   "peerDependencies": {
     "@deepseek-ai/dsh-credentials": "0.2.0-rc.2",
-    "@deepseek-ai/dsh-tools": "0.2.0-rc.2"
+    "@deepseek-ai/dsh-tools": "0.2.0-rc.2",
+    "@deepseek-ai/schemastery": "~3.18.4"
   },
   "devDependencies": {
     "@deepseek-ai/dsh-credentials": "0.2.0-rc.2",
     "@deepseek-ai/dsh-tools": "0.2.0-rc.2",
-    "js-yaml": "4.1.0"
+    "@deepseek-ai/schemastery": "~3.18.4",
+    "@types/node": "^24.0.0",
+    "@types/react": "~18.3.31",
+    "js-yaml": "4.1.0",
+    "lightningcss": "1.32.0",
+    "react": "^18.3.1",
+    "tsdown": "^0.15.0"
   },
   "engines": {
     "node": ">=22.19.0"

@@ -6,18 +6,21 @@ Native DeepSeek Harness tools for the internal GEO workflow. It calls GEO's exis
 
 - DeepSeek Harness `0.2.0-rc.2`
 - Node.js `>=22.19`
+- The package includes a DSH-native **GEO 工作台** configuration card under the plugin's settings page.
 - Internal platform machine authentication through `POST /auth/machine-token`; GEO requests use the returned short-lived Sa-Token bearer credential
-- `GEO_API_BASE_URL` must be an HTTP(S) origin only; the plugin appends the OpenAPI server path `/geo`.
+- Configure a GEO service origin in the card; the plugin appends `/geo` for business calls and uses `/auth/machine-token` for authentication.
 
-Install this local package in an isolated DSH profile. Store `GEO_MACHINE_CLIENT_ID` and `GEO_MACHINE_CLIENT_SECRET` in that profile's DSH Settings → Credentials. The plugin exchanges them for a token bound server-side to one GEO service account; the access token stays in process memory. Set `GEO_EVIDENCE_DIRECTORY` to an operator-owned staging directory if evidence upload is needed. Do not store secrets in this repository, the Skill, or command-line arguments.
+Install this package in an isolated DSH profile, then fill in the GEO service address and one project authorization row per GEO project in the GEO 工作台 card. Each row stores the project ID, an optional display name, and that project's machine client credentials. Every configured project must use a unique Client ID; the card catches duplicates entered together and the plugin refuses to authenticate if configured projects share an ID. Credentials are written through DSH's write-only Credentials interface under project-specific references; the short-lived Bearer token is exchanged and cached separately for each project, never shown. The platform binds each machine client to a service account and tenant; give each account membership only in its corresponding GEO project so project isolation is enforced by the GEO backend. Set the optional evidence staging directory in the same card if evidence upload is needed. Use HTTPS for non-loopback service addresses, including private IPs. Do not store secrets in this repository, the Skill, or command-line arguments.
 
 ## Tools
 
-- `geo_api`: call one exact operation from the generated GEO OpenAPI catalog. The plugin validates path/query/body fields and refuses arbitrary hosts, headers, or undeclared fields.
+- `geo_api`: call one exact operation from the generated GEO OpenAPI catalog. Supply the target `projectId`; the plugin uses that project's machine client and rejects requests whose path/query/body project ID differs. The selector is not added to the business request. The plugin validates path/query/body fields and refuses arbitrary hosts, headers, or undeclared fields.
 - `geo_describe_operation`: inspect the current generated method, route, request schema, permission, and idempotency rule.
 - `geo_list_evidence_files`: list allowed evidence file names and sizes from the configured staging folder; it never reads or returns their contents.
 - `geo_upload_evidence`: upload one direct-child `.doc`, `.docx`, `.pdf`, or `.txt` file to the canonical multipart route. Absolute paths, traversal, symbolic links, and unsupported extensions are rejected.
-- `geo_connection_status`: report whether origin, credential, evidence folder, and OpenAPI catalog are configured without revealing their values.
+- `geo_connection_status`: test one selected project's machine client and report its bound service account and token expiry without revealing the access token.
+
+After saving the card, call `geo_connection_status` with each configured project ID to verify its machine authentication and bound service account. This check does not perform a GEO business write.
 
 Authentication is specified separately in `../scrm-specs/30-contracts/platform-auth-machine-token.yaml` under `D-20261001`. It is an internal platform auth route, not part of GEO's business OpenAPI or OneGl's external API. The bound service account must be a non-admin tenant user with only required GEO permissions and project memberships. Machine secrets are BCrypt-hashed at rest and are not returned by client administration APIs.
 
@@ -33,6 +36,7 @@ Image/video file upload uses the separate Resource/OSS path and is outside this 
 
 ```powershell
 npm ci --ignore-scripts
+npm run build:client
 npm test
 npm run validate
 npm run generate:catalog
