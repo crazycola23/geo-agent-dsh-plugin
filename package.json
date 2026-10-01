@@ -1,0 +1,41 @@
+{
+  "name": "@geo-internal/geo-agent-dsh-plugin",
+  "version": "0.1.0",
+  "private": true,
+  "description": "DSH tools for the internal GEO operations workflow",
+  "type": "module",
+  "main": "./src/index.js",
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "files": [
+    "cordis.patch.yml",
+    "src/index.js",
+    "src/auth-provider.js",
+    "src/api-client.js",
+    "src/schema.js",
+    "src/generated/openapi.catalog.json"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "scripts": {
+    "generate:catalog": "node ./scripts/generate-catalog.mjs",
+    "test": "node --test",
+    "validate": "node ./scripts/validate-catalog.mjs"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-credentials": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-tools": "0.2.0-rc.2"
+  },
+  "devDependencies": {
+    "@deepseek-ai/dsh-credentials": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-tools": "0.2.0-rc.2",
+    "js-yaml": "4.1.0"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  }
+}

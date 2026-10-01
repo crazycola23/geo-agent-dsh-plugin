@@ -1,0 +1,3 @@
+- insert:
+    - id: geo-agent-dsh-plugin
+      name: '@geo-internal/geo-agent-dsh-plugin'
