@@ -83,6 +83,28 @@ test('unknown network outcome is returned once with its idempotency key; the plu
   assert.match(result.idempotencyKey, /^[0-9a-f-]{36}$/i);
 });
 
+test('server error after a write remains unknown and preserves the original idempotency key', async () => {
+  let calls = 0;
+  const result = await executeGeoOperation({
+    catalog: testCatalog(), operationName: 'post_facts',
+    args: { body: { projectId: 42, claim: 'Has in-house support' }, idempotencyKey: 'stable-request-500' },
+    baseUrl: 'https://geo.example', token: 'secret',
+    fetchImpl: async () => {
+      calls += 1;
+      return new Response(JSON.stringify({ code: 500, msg: 'upstream processing error' }), {
+        status: 500,
+        headers: { 'content-type': 'application/json' },
+      });
+    },
+  });
+  assert.equal(calls, 1);
+  assert.equal(result.ok, false);
+  assert.equal(result.outcome, 'unknown');
+  assert.equal(result.status, 500);
+  assert.equal(result.idempotencyKey, 'stable-request-500');
+  assert.match(result.error, /reconcil|inspect/i);
+});
+
 test('GEO bearer credential is required and never returned to the model', async () => {
   let calls = 0;
   const result = await executeGeoOperation({

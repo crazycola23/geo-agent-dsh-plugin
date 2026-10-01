@@ -52,3 +52,20 @@ test('generated catalog includes current OneGl customer-report operations and om
   assert.equal(catalog.operations.post_report_revisions_by_id_send_external, undefined);
   assert.ok(catalog.excluded.some(operation => operation.path.includes('/send-external')));
 });
+
+test('generated catalog excludes admin-only, destructive, and budget-release permissions', () => {
+  const deniedPermissions = new Set([
+    'geo:project:archive',
+    'geo:project:delete',
+    'geo:project:restore',
+    'geo:content:delete',
+    'geo:channel:manage',
+    'geo:budget:release',
+    'geo:audit:view',
+    'geo:audit:export',
+  ]);
+  const exposed = Object.values(catalog.operations)
+    .filter(operation => deniedPermissions.has(operation.permission));
+  assert.deepEqual(exposed.map(operation => `${operation.method} ${operation.path}`), []);
+  assert.ok(catalog.operations.post_publish_records_confirm, 'human-approved publishing remains available');
+});

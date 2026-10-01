@@ -25,6 +25,14 @@ const deniedPathPatterns = [
 
 const deniedPermissionCodes = new Map([
   ['geo:collector:account:admin', '全租户采集账号明细超出 GEO 运营 Agent 的项目范围'],
+  ['geo:project:archive', '项目归档不属于 GEO 运营 Agent 的日常项目操作'],
+  ['geo:project:delete', '项目删除或已发布记录撤回属于高风险治理操作'],
+  ['geo:project:restore', '恢复归档项目及其高风险例外操作不属于 GEO 运营 Agent 的范围'],
+  ['geo:content:delete', '删除内容任务属于高风险治理操作'],
+  ['geo:channel:manage', '发布目标配置由 GEO 管理员维护'],
+  ['geo:budget:release', '租户资金池与预算放行超出 GEO 项目运营范围'],
+  ['geo:audit:view', '管理端审计读取不暴露给 GEO 运营 Agent'],
+  ['geo:audit:export', '管理端审计导出不暴露给 GEO 运营 Agent'],
 ]);
 
 function pointer(document, ref) {

@@ -883,92 +883,6 @@
       "requestBody": null,
       "hasJsonResponse": true
     },
-    "post_projects_by_projectid_archive": {
-      "name": "post_projects_by_projectid_archive",
-      "method": "POST",
-      "path": "/projects/{projectId}/archive",
-      "tag": "project",
-      "summary": "归档项目 ⚠ 高风险",
-      "description": "T-OPEN-10：仅 completed / cancelled 可归档；version 做 geo_project CAS，reason 必填并写入归档字段、状态历史和审计；成功响应 data 为更新后的 ProjectDetail。",
-      "permission": "geo:project:archive",
-      "idempotencyRule": "required: projectId + archive + version + reason",
-      "parameters": [
-        {
-          "name": "projectId",
-          "in": "path",
-          "required": true,
-          "description": "",
-          "schema": {
-            "type": "string"
-          },
-          "style": "form",
-          "explode": true
-        },
-        {
-          "name": "X-Idempotency-Key",
-          "in": "header",
-          "required": true,
-          "description": "T-OPEN-10：归档/恢复动作使用 UUID；同一项目 + 动作 + version + reason 在 24h 内重放首次响应，不重复推进状态或追加审计",
-          "schema": {
-            "type": "string",
-            "format": "uuid"
-          },
-          "style": "form",
-          "explode": true
-        }
-      ],
-      "requestBody": {
-        "required": true,
-        "contentType": "application/json",
-        "schema": {
-          "$ref": "#/components/schemas/ProjectArchiveAction"
-        }
-      },
-      "hasJsonResponse": true
-    },
-    "post_projects_by_projectid_restore": {
-      "name": "post_projects_by_projectid_restore",
-      "method": "POST",
-      "path": "/projects/{projectId}/restore",
-      "tag": "project",
-      "summary": "归档例外（恢复/补测/重发/外发）⚠ 高风险",
-      "description": "T-OPEN-10 / BR-PROJECT-003：恢复动作必须同时具备 geo:project:restore 与 geo:project:edit，并记录原因。\n恢复成功将项目从 archived 回迁到 paused，并清空当前投影的 archived_at / archived_reason；不自动启动任务或恢复付费执行。\n",
-      "permission": "geo:project:restore",
-      "idempotencyRule": "required: projectId + restore + version + reason",
-      "parameters": [
-        {
-          "name": "projectId",
-          "in": "path",
-          "required": true,
-          "description": "",
-          "schema": {
-            "type": "string"
-          },
-          "style": "form",
-          "explode": true
-        },
-        {
-          "name": "X-Idempotency-Key",
-          "in": "header",
-          "required": true,
-          "description": "T-OPEN-10：归档/恢复动作使用 UUID；同一项目 + 动作 + version + reason 在 24h 内重放首次响应，不重复推进状态或追加审计",
-          "schema": {
-            "type": "string",
-            "format": "uuid"
-          },
-          "style": "form",
-          "explode": true
-        }
-      ],
-      "requestBody": {
-        "required": true,
-        "contentType": "application/json",
-        "schema": {
-          "$ref": "#/components/schemas/ProjectArchiveAction"
-        }
-      },
-      "hasJsonResponse": true
-    },
     "get_projects_by_projectid_initial_tasks": {
       "name": "get_projects_by_projectid_initial_tasks",
       "method": "GET",
@@ -2967,43 +2881,6 @@
       "requestBody": null,
       "hasJsonResponse": true
     },
-    "delete_content_generation_tasks_by_id": {
-      "name": "delete_content_generation_tasks_by_id",
-      "method": "DELETE",
-      "path": "/content-generation-tasks/{id}",
-      "tag": "content",
-      "summary": "删除已停用内容生成任务",
-      "description": "仅 enabled=false 且最近执行状态不为 QUEUED / RUNNING 时可删除（CANCELLED 视为未执行中，可删除）。删除仅隐藏任务配置，历史文章、执行记录保留。",
-      "permission": "geo:content:delete",
-      "idempotencyRule": "required: X-Idempotency-Key",
-      "parameters": [
-        {
-          "name": "id",
-          "in": "path",
-          "required": true,
-          "description": "雪花 ID 字符串（conventions §7）",
-          "schema": {
-            "type": "string"
-          },
-          "style": "form",
-          "explode": true
-        },
-        {
-          "name": "X-Idempotency-Key",
-          "in": "header",
-          "required": true,
-          "description": "T-08 写动作必填；同一资源 + 动作 + 24h 内重复返回首次响应体与首次 HTTP 状态，并置 Idempotent-Replayed: true。",
-          "schema": {
-            "type": "string",
-            "format": "uuid"
-          },
-          "style": "form",
-          "explode": true
-        }
-      ],
-      "requestBody": null,
-      "hasJsonResponse": true
-    },
     "put_content_generation_tasks_by_id": {
       "name": "put_content_generation_tasks_by_id",
       "method": "PUT",
@@ -3679,210 +3556,6 @@
         }
       ],
       "requestBody": null,
-      "hasJsonResponse": true
-    },
-    "post_publish_targets": {
-      "name": "post_publish_targets",
-      "method": "POST",
-      "path": "/publish-targets",
-      "tag": "publish",
-      "summary": "初始化发布目标（S12）",
-      "description": "管理员从页面创建渠道和发布目标；channelId、targetId、tenantId、version 与创建人均由服务端生成，不接受客户端提交 ID。",
-      "permission": "geo:channel:manage",
-      "idempotencyRule": "required: PublishTarget + create + client request",
-      "parameters": [
-        {
-          "name": "X-Idempotency-Key",
-          "in": "header",
-          "required": true,
-          "description": "T-08 写动作必填；同一资源 + 动作 + 24h 内重复返回首次响应体与首次 HTTP 状态，并置 Idempotent-Replayed: true。",
-          "schema": {
-            "type": "string",
-            "format": "uuid"
-          },
-          "style": "form",
-          "explode": true
-        }
-      ],
-      "requestBody": {
-        "required": false,
-        "contentType": "application/json",
-        "schema": {
-          "$ref": "#/components/schemas/PublishTargetCreate"
-        }
-      },
-      "hasJsonResponse": true
-    },
-    "put_publish_targets_by_id": {
-      "name": "put_publish_targets_by_id",
-      "method": "PUT",
-      "path": "/publish-targets/{id}",
-      "tag": "publish",
-      "summary": "编辑发布目标（S12）",
-      "description": "管理员编辑目标基础字段；version 必须匹配当前记录，服务端不允许改写历史 PublishRecord。",
-      "permission": "geo:channel:manage",
-      "idempotencyRule": "required: PublishTarget + update + version",
-      "parameters": [
-        {
-          "name": "id",
-          "in": "path",
-          "required": true,
-          "description": "雪花 ID 字符串（conventions §7）",
-          "schema": {
-            "type": "string"
-          },
-          "style": "form",
-          "explode": true
-        },
-        {
-          "name": "X-Idempotency-Key",
-          "in": "header",
-          "required": true,
-          "description": "T-08 写动作必填；同一资源 + 动作 + 24h 内重复返回首次响应体与首次 HTTP 状态，并置 Idempotent-Replayed: true。",
-          "schema": {
-            "type": "string",
-            "format": "uuid"
-          },
-          "style": "form",
-          "explode": true
-        }
-      ],
-      "requestBody": {
-        "required": false,
-        "contentType": "application/json",
-        "schema": {
-          "$ref": "#/components/schemas/PublishTargetUpdate"
-        }
-      },
-      "hasJsonResponse": true
-    },
-    "post_publish_targets_by_id_enable": {
-      "name": "post_publish_targets_by_id_enable",
-      "method": "POST",
-      "path": "/publish-targets/{id}/enable",
-      "tag": "publish",
-      "summary": "启用发布目标（S12）",
-      "description": "使用 version CAS 启用目标；不修改历史 PublishRecord。",
-      "permission": "geo:channel:manage",
-      "idempotencyRule": "required: PublishTarget + enable + version",
-      "parameters": [
-        {
-          "name": "id",
-          "in": "path",
-          "required": true,
-          "description": "雪花 ID 字符串（conventions §7）",
-          "schema": {
-            "type": "string"
-          },
-          "style": "form",
-          "explode": true
-        },
-        {
-          "name": "X-Idempotency-Key",
-          "in": "header",
-          "required": true,
-          "description": "T-08 写动作必填；同一资源 + 动作 + 24h 内重复返回首次响应体与首次 HTTP 状态，并置 Idempotent-Replayed: true。",
-          "schema": {
-            "type": "string",
-            "format": "uuid"
-          },
-          "style": "form",
-          "explode": true
-        }
-      ],
-      "requestBody": {
-        "required": false,
-        "contentType": "application/json",
-        "schema": {
-          "$ref": "#/components/schemas/PublishTargetStateChange"
-        }
-      },
-      "hasJsonResponse": true
-    },
-    "post_publish_targets_by_id_disable": {
-      "name": "post_publish_targets_by_id_disable",
-      "method": "POST",
-      "path": "/publish-targets/{id}/disable",
-      "tag": "publish",
-      "summary": "停用发布目标（S12）",
-      "description": "使用 version CAS 停用目标；停用是软状态变更，不删除数据，也不修改历史 PublishRecord。",
-      "permission": "geo:channel:manage",
-      "idempotencyRule": "required: PublishTarget + disable + version",
-      "parameters": [
-        {
-          "name": "id",
-          "in": "path",
-          "required": true,
-          "description": "雪花 ID 字符串（conventions §7）",
-          "schema": {
-            "type": "string"
-          },
-          "style": "form",
-          "explode": true
-        },
-        {
-          "name": "X-Idempotency-Key",
-          "in": "header",
-          "required": true,
-          "description": "T-08 写动作必填；同一资源 + 动作 + 24h 内重复返回首次响应体与首次 HTTP 状态，并置 Idempotent-Replayed: true。",
-          "schema": {
-            "type": "string",
-            "format": "uuid"
-          },
-          "style": "form",
-          "explode": true
-        }
-      ],
-      "requestBody": {
-        "required": false,
-        "contentType": "application/json",
-        "schema": {
-          "$ref": "#/components/schemas/PublishTargetStateChange"
-        }
-      },
-      "hasJsonResponse": true
-    },
-    "put_publish_targets_by_id_provider_config": {
-      "name": "put_publish_targets_by_id_provider_config",
-      "method": "PUT",
-      "path": "/publish-targets/{id}/provider-config",
-      "tag": "publish",
-      "summary": "保存发布目标资源映射（S12）",
-      "description": "资源目录仍只读；管理员把资源类型和稳定资源 ID 映射到 PublishTarget。Provider 由服务端受管配置决定，用户不在此切换或配置 Provider。服务端按 version CAS，不能改写历史 PublishRecord。",
-      "permission": "geo:channel:manage",
-      "idempotencyRule": "required: PublishTarget + provider-config + version",
-      "parameters": [
-        {
-          "name": "id",
-          "in": "path",
-          "required": true,
-          "description": "雪花 ID 字符串（conventions §7）",
-          "schema": {
-            "type": "string"
-          },
-          "style": "form",
-          "explode": true
-        },
-        {
-          "name": "X-Idempotency-Key",
-          "in": "header",
-          "required": true,
-          "description": "T-08 写动作必填；同一资源 + 动作 + 24h 内重复返回首次响应体与首次 HTTP 状态，并置 Idempotent-Replayed: true。",
-          "schema": {
-            "type": "string",
-            "format": "uuid"
-          },
-          "style": "form",
-          "explode": true
-        }
-      ],
-      "requestBody": {
-        "required": false,
-        "contentType": "application/json",
-        "schema": {
-          "$ref": "#/components/schemas/PublishTargetProviderConfig"
-        }
-      },
       "hasJsonResponse": true
     },
     "get_publish_resources": {
@@ -4986,49 +4659,6 @@
       "description": "BR-PUBLISH-008 必须保留原因、订单关联与状态历史。\n服务端按当前状态 CAS 决定动作：pending_confirm→cancelled 追加 PUBLISH_CANCELLED；rejected→appealing 追加 PUBLISH_APPEALED；其他状态拒绝。\n",
       "permission": "geo:publish:cancel",
       "idempotencyRule": "required: PublishRecord + current status + action + reason",
-      "parameters": [
-        {
-          "name": "id",
-          "in": "path",
-          "required": true,
-          "description": "雪花 ID 字符串（conventions §7）",
-          "schema": {
-            "type": "string"
-          },
-          "style": "form",
-          "explode": true
-        },
-        {
-          "name": "X-Idempotency-Key",
-          "in": "header",
-          "required": true,
-          "description": "T-09 发布预览、确认、人工登记、查单、取消/申诉必填；同一动作 + 24h 内重放首次响应，不重复创建记录、预算预留、状态历史或审计。",
-          "schema": {
-            "type": "string",
-            "format": "uuid"
-          },
-          "style": "form",
-          "explode": true
-        }
-      ],
-      "requestBody": {
-        "required": true,
-        "contentType": "application/json",
-        "schema": {
-          "$ref": "#/components/schemas/PublishActionReason"
-        }
-      },
-      "hasJsonResponse": true
-    },
-    "post_publish_records_by_id_withdraw": {
-      "name": "post_publish_records_by_id_withdraw",
-      "method": "POST",
-      "path": "/publish-records/{id}/withdraw",
-      "tag": "publish",
-      "summary": "撤回已发布记录 ⚠ 高风险",
-      "description": "仅允许 published 且目标 editPolicy 支持撤回时执行 published→withdrawn。\n服务端以当前状态 CAS，保留原 URL、订单、费用和状态历史；客户端不得提交目标状态。\n",
-      "permission": "geo:project:delete",
-      "idempotencyRule": "required: PublishRecord + withdraw + current status + reason",
       "parameters": [
         {
           "name": "id",
@@ -6443,19 +6073,6 @@
       "requestBody": null,
       "hasJsonResponse": true
     },
-    "get_budget_pool": {
-      "name": "get_budget_pool",
-      "method": "GET",
-      "path": "/budget/pool",
-      "tag": "cost",
-      "summary": "当前租户管理端资金池",
-      "description": "需要 geo:budget:release；读取时确保当前租户存在零余额资金池，不会自动充值真实金额。",
-      "permission": "geo:budget:release",
-      "idempotencyRule": null,
-      "parameters": [],
-      "requestBody": null,
-      "hasJsonResponse": true
-    },
     "get_expense_ledger": {
       "name": "get_expense_ledger",
       "method": "GET",
@@ -6845,211 +6462,6 @@
       },
       "hasJsonResponse": true
     },
-    "get_audit_events": {
-      "name": "get_audit_events",
-      "method": "GET",
-      "path": "/audit-events",
-      "tag": "audit",
-      "summary": "审计查询（S14）",
-      "description": "BR-AUDIT-003 可按对象、操作者、时间、原因、关联 ID 查询。\n返回行优先使用审计写入时保存的 actorName；历史行缺少 actorName 时按 actorId 批量解析当前昵称，无法解析时保持 null，由客户端显示用户 ID 或系统兜底。\n**只读**：无 POST / PUT / DELETE（BR-AUDIT-002、AC-AUDIT-001）\n",
-      "permission": "geo:audit:view",
-      "idempotencyRule": null,
-      "parameters": [
-        {
-          "name": "pageNum",
-          "in": "query",
-          "required": false,
-          "description": "",
-          "schema": {
-            "type": "integer",
-            "default": 1
-          },
-          "style": "form",
-          "explode": true
-        },
-        {
-          "name": "pageSize",
-          "in": "query",
-          "required": false,
-          "description": "",
-          "schema": {
-            "type": "integer",
-            "default": 10,
-            "maximum": 100
-          },
-          "style": "form",
-          "explode": true
-        },
-        {
-          "name": "projectId",
-          "in": "query",
-          "required": true,
-          "description": "项目级审计必须显式指定项目；服务端同时校验租户归属和当前用户的主运营/有效成员范围。不存在隐式全租户回退。",
-          "schema": {
-            "type": "string"
-          },
-          "style": "form",
-          "explode": true
-        },
-        {
-          "name": "objectType",
-          "in": "query",
-          "required": false,
-          "description": "",
-          "schema": {
-            "type": "string"
-          },
-          "style": "form",
-          "explode": true
-        },
-        {
-          "name": "objectId",
-          "in": "query",
-          "required": false,
-          "description": "",
-          "schema": {
-            "type": "string"
-          },
-          "style": "form",
-          "explode": true
-        },
-        {
-          "name": "action",
-          "in": "query",
-          "required": false,
-          "description": "",
-          "schema": {
-            "type": "string",
-            "description": "05 §16"
-          },
-          "style": "form",
-          "explode": true
-        },
-        {
-          "name": "actorId",
-          "in": "query",
-          "required": false,
-          "description": "",
-          "schema": {
-            "type": "string"
-          },
-          "style": "form",
-          "explode": true
-        },
-        {
-          "name": "from",
-          "in": "query",
-          "required": false,
-          "description": "",
-          "schema": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "style": "form",
-          "explode": true
-        },
-        {
-          "name": "to",
-          "in": "query",
-          "required": false,
-          "description": "",
-          "schema": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "style": "form",
-          "explode": true
-        },
-        {
-          "name": "keyword",
-          "in": "query",
-          "required": false,
-          "description": "按 object_id / actor_name 模糊查询",
-          "schema": {
-            "type": "string"
-          },
-          "style": "form",
-          "explode": true
-        }
-      ],
-      "requestBody": null,
-      "hasJsonResponse": true
-    },
-    "get_audit_runs": {
-      "name": "get_audit_runs",
-      "method": "GET",
-      "path": "/audit-runs",
-      "tag": "audit",
-      "summary": "Audit Run 草案列表",
-      "description": "与操作审计事件分离；只展示 AI/规则产生的可追溯 Finding 草案，不展示未冻结的审计评分。",
-      "permission": "geo:audit:view",
-      "idempotencyRule": null,
-      "parameters": [
-        {
-          "name": "pageNum",
-          "in": "query",
-          "required": false,
-          "description": "",
-          "schema": {
-            "type": "integer",
-            "default": 1
-          },
-          "style": "form",
-          "explode": true
-        },
-        {
-          "name": "pageSize",
-          "in": "query",
-          "required": false,
-          "description": "",
-          "schema": {
-            "type": "integer",
-            "default": 10,
-            "maximum": 100
-          },
-          "style": "form",
-          "explode": true
-        },
-        {
-          "name": "projectId",
-          "in": "query",
-          "required": false,
-          "description": "",
-          "schema": {
-            "type": "string"
-          },
-          "style": "form",
-          "explode": true
-        }
-      ],
-      "requestBody": null,
-      "hasJsonResponse": true
-    },
-    "get_audit_runs_by_id": {
-      "name": "get_audit_runs_by_id",
-      "method": "GET",
-      "path": "/audit-runs/{id}",
-      "tag": "audit",
-      "summary": "Audit Run 草案详情",
-      "description": "",
-      "permission": "geo:audit:view",
-      "idempotencyRule": null,
-      "parameters": [
-        {
-          "name": "id",
-          "in": "path",
-          "required": true,
-          "description": "雪花 ID 字符串（conventions §7）",
-          "schema": {
-            "type": "string"
-          },
-          "style": "form",
-          "explode": true
-        }
-      ],
-      "requestBody": null,
-      "hasJsonResponse": true
-    },
     "get_monitoring_runs": {
       "name": "get_monitoring_runs",
       "method": "GET",
@@ -7279,149 +6691,6 @@
             "type": "string",
             "minLength": 1,
             "maxLength": 64
-          },
-          "style": "form",
-          "explode": true
-        }
-      ],
-      "requestBody": null,
-      "hasJsonResponse": true
-    },
-    "get_audit_events_export": {
-      "name": "get_audit_events_export",
-      "method": "GET",
-      "path": "/audit-events/export",
-      "tag": "audit",
-      "summary": "导出审计",
-      "description": "T-OPEN-08：采用服务端快照 + 不透明 cursor 的分批协议。\n首次请求不带 cursor；后续请求只提交服务端返回的 nextCursor。\n首批成功只追加一条 AUDIT_EXPORTED，重复批次请求不得重复追加。\n",
-      "permission": "geo:audit:export",
-      "idempotencyRule": "required per batch；同一 cursor + X-Idempotency-Key 重放同一批次，不重复审计",
-      "parameters": [
-        {
-          "name": "X-Idempotency-Key",
-          "in": "header",
-          "required": true,
-          "description": "T-OPEN-08：每个导出批次使用新的 UUID；同一 cursor + key 重放同一批次，不重复追加 AUDIT_EXPORTED",
-          "schema": {
-            "type": "string",
-            "format": "uuid"
-          },
-          "style": "form",
-          "explode": true
-        },
-        {
-          "name": "projectId",
-          "in": "query",
-          "required": true,
-          "description": "项目级审计必须显式指定项目；服务端同时校验租户归属和当前用户的主运营/有效成员范围。不存在隐式全租户回退。",
-          "schema": {
-            "type": "string"
-          },
-          "style": "form",
-          "explode": true
-        },
-        {
-          "name": "objectType",
-          "in": "query",
-          "required": false,
-          "description": "",
-          "schema": {
-            "type": "string"
-          },
-          "style": "form",
-          "explode": true
-        },
-        {
-          "name": "objectId",
-          "in": "query",
-          "required": false,
-          "description": "",
-          "schema": {
-            "type": "string"
-          },
-          "style": "form",
-          "explode": true
-        },
-        {
-          "name": "action",
-          "in": "query",
-          "required": false,
-          "description": "",
-          "schema": {
-            "type": "string",
-            "description": "05 §16"
-          },
-          "style": "form",
-          "explode": true
-        },
-        {
-          "name": "actorId",
-          "in": "query",
-          "required": false,
-          "description": "",
-          "schema": {
-            "type": "string"
-          },
-          "style": "form",
-          "explode": true
-        },
-        {
-          "name": "from",
-          "in": "query",
-          "required": false,
-          "description": "",
-          "schema": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "style": "form",
-          "explode": true
-        },
-        {
-          "name": "to",
-          "in": "query",
-          "required": false,
-          "description": "",
-          "schema": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "style": "form",
-          "explode": true
-        },
-        {
-          "name": "keyword",
-          "in": "query",
-          "required": false,
-          "description": "按 object_id / actor_name 模糊查询",
-          "schema": {
-            "type": "string"
-          },
-          "style": "form",
-          "explode": true
-        },
-        {
-          "name": "batchSize",
-          "in": "query",
-          "required": false,
-          "description": "首批可选；后续以服务端返回值为准",
-          "schema": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 1000,
-            "default": 500
-          },
-          "style": "form",
-          "explode": true
-        },
-        {
-          "name": "cursor",
-          "in": "query",
-          "required": false,
-          "description": "服务端返回的不透明游标；客户端不得解析或修改",
-          "schema": {
-            "type": "string",
-            "nullable": true
           },
           "style": "form",
           "explode": true
@@ -8352,28 +7621,6 @@
       "required": [
         "bucketType",
         "totalAmount"
-      ]
-    },
-    "ProjectArchiveAction": {
-      "type": "object",
-      "additionalProperties": false,
-      "description": "T-OPEN-10：归档/恢复动作请求体；客户端不得提交 status、archivedAt 或 archivedReason。",
-      "properties": {
-        "version": {
-          "type": "integer",
-          "minimum": 0,
-          "description": "geo_project.version CAS"
-        },
-        "reason": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 500,
-          "description": "归档/恢复原因；写入状态历史与审计，归档时同时写入 archived_reason"
-        }
-      },
-      "required": [
-        "version",
-        "reason"
       ]
     },
     "CustomerCreate": {
@@ -9477,190 +8724,6 @@
         "body"
       ]
     },
-    "PublishTargetCreate": {
-      "type": "object",
-      "additionalProperties": false,
-      "description": "S12 空库初始化表单；不接受 channelId、targetId、tenantId、version、provider 或创建人",
-      "properties": {
-        "channelName": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 200
-        },
-        "channelType": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 32
-        },
-        "name": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 200
-        },
-        "account": {
-          "type": "string",
-          "nullable": true,
-          "maxLength": 200
-        },
-        "subject": {
-          "type": "string",
-          "nullable": true,
-          "maxLength": 200
-        },
-        "quotedAmount": {
-          "type": "number",
-          "minimum": 0,
-          "nullable": true
-        },
-        "currency": {
-          "type": "string",
-          "pattern": "^[A-Z]{3}$",
-          "nullable": true
-        },
-        "editPolicy": {
-          "type": "string",
-          "nullable": true,
-          "maxLength": 200
-        },
-        "retention": {
-          "type": "string",
-          "nullable": true,
-          "maxLength": 200
-        },
-        "executionMode": {
-          "type": "string",
-          "enum": [
-            "auto",
-            "manual"
-          ]
-        }
-      },
-      "required": [
-        "channelName",
-        "channelType",
-        "name",
-        "executionMode"
-      ]
-    },
-    "PublishTargetUpdate": {
-      "type": "object",
-      "additionalProperties": false,
-      "description": "S12 编辑表单；version 用于乐观锁，ID 来自页面已存在资源，不由用户手填",
-      "properties": {
-        "version": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "channelName": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 200
-        },
-        "channelType": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 32
-        },
-        "name": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 200
-        },
-        "account": {
-          "type": "string",
-          "nullable": true,
-          "maxLength": 200
-        },
-        "subject": {
-          "type": "string",
-          "nullable": true,
-          "maxLength": 200
-        },
-        "quotedAmount": {
-          "type": "number",
-          "minimum": 0,
-          "nullable": true
-        },
-        "currency": {
-          "type": "string",
-          "pattern": "^[A-Z]{3}$",
-          "nullable": true
-        },
-        "editPolicy": {
-          "type": "string",
-          "nullable": true,
-          "maxLength": 200
-        },
-        "retention": {
-          "type": "string",
-          "nullable": true,
-          "maxLength": 200
-        },
-        "executionMode": {
-          "type": "string",
-          "enum": [
-            "auto",
-            "manual"
-          ]
-        }
-      },
-      "required": [
-        "version",
-        "channelName",
-        "channelType",
-        "name",
-        "executionMode"
-      ]
-    },
-    "PublishTargetStateChange": {
-      "type": "object",
-      "additionalProperties": false,
-      "description": "S12 启停操作的版本 CAS 请求体",
-      "properties": {
-        "version": {
-          "type": "integer",
-          "minimum": 0
-        }
-      },
-      "required": [
-        "version"
-      ]
-    },
-    "PublishTargetProviderConfig": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "version": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "providerCode": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 64
-        },
-        "providerResourceType": {
-          "type": "string",
-          "enum": [
-            "media",
-            "self_media",
-            "overseas_media",
-            "short_video"
-          ]
-        },
-        "providerResourceId": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 128
-        }
-      },
-      "required": [
-        "version",
-        "providerCode",
-        "providerResourceType",
-        "providerResourceId"
-      ]
-    },
     "PreviewFromResourceRequest": {
       "type": "object",
       "additionalProperties": false,
@@ -10552,6 +9615,18 @@
   },
   "excluded": [
     {
+      "method": "POST",
+      "path": "/projects/{projectId}/archive",
+      "summary": "归档项目 ⚠ 高风险",
+      "reason": "项目归档不属于 GEO 运营 Agent 的日常项目操作"
+    },
+    {
+      "method": "POST",
+      "path": "/projects/{projectId}/restore",
+      "summary": "归档例外（恢复/补测/重发/外发）⚠ 高风险",
+      "reason": "恢复归档项目及其高风险例外操作不属于 GEO 运营 Agent 的范围"
+    },
+    {
       "method": "GET",
       "path": "/evidence-sources/{sourceId}/file",
       "summary": "读取资料原件（S05 Tab1 在线预览）",
@@ -10586,6 +9661,42 @@
       "path": "/oss-images/admin/{ossId}",
       "summary": "管理员从指定项目图库解绑图片",
       "reason": "跨项目管理员操作不暴露给 GEO 运营 Agent"
+    },
+    {
+      "method": "DELETE",
+      "path": "/content-generation-tasks/{id}",
+      "summary": "删除已停用内容生成任务",
+      "reason": "删除内容任务属于高风险治理操作"
+    },
+    {
+      "method": "POST",
+      "path": "/publish-targets",
+      "summary": "初始化发布目标（S12）",
+      "reason": "发布目标配置由 GEO 管理员维护"
+    },
+    {
+      "method": "PUT",
+      "path": "/publish-targets/{id}",
+      "summary": "编辑发布目标（S12）",
+      "reason": "发布目标配置由 GEO 管理员维护"
+    },
+    {
+      "method": "POST",
+      "path": "/publish-targets/{id}/enable",
+      "summary": "启用发布目标（S12）",
+      "reason": "发布目标配置由 GEO 管理员维护"
+    },
+    {
+      "method": "POST",
+      "path": "/publish-targets/{id}/disable",
+      "summary": "停用发布目标（S12）",
+      "reason": "发布目标配置由 GEO 管理员维护"
+    },
+    {
+      "method": "PUT",
+      "path": "/publish-targets/{id}/provider-config",
+      "summary": "保存发布目标资源映射（S12）",
+      "reason": "发布目标配置由 GEO 管理员维护"
     },
     {
       "method": "GET",
@@ -10624,6 +9735,12 @@
       "reason": "Provider 回调只能由受信任 Provider 调用"
     },
     {
+      "method": "POST",
+      "path": "/publish-records/{id}/withdraw",
+      "summary": "撤回已发布记录 ⚠ 高风险",
+      "reason": "项目删除或已发布记录撤回属于高风险治理操作"
+    },
+    {
       "method": "GET",
       "path": "/report-revisions/{id}/send-external",
       "summary": "客户版脱敏预览 ⚠",
@@ -10636,10 +9753,16 @@
       "reason": "客户外发不属于内部 GEO 运营工具"
     },
     {
+      "method": "GET",
+      "path": "/budget/pool",
+      "summary": "当前租户管理端资金池",
+      "reason": "租户资金池与预算放行超出 GEO 项目运营范围"
+    },
+    {
       "method": "POST",
       "path": "/budget/pool/initialize",
       "summary": "初始化当前租户资金池",
-      "reason": "cost 写操作不属于 GEO 运营 Agent 的职责"
+      "reason": "租户资金池与预算放行超出 GEO 项目运营范围"
     },
     {
       "method": "POST",
@@ -10649,9 +9772,33 @@
     },
     {
       "method": "GET",
+      "path": "/audit-events",
+      "summary": "审计查询（S14）",
+      "reason": "管理端审计读取不暴露给 GEO 运营 Agent"
+    },
+    {
+      "method": "GET",
+      "path": "/audit-runs",
+      "summary": "Audit Run 草案列表",
+      "reason": "管理端审计读取不暴露给 GEO 运营 Agent"
+    },
+    {
+      "method": "GET",
+      "path": "/audit-runs/{id}",
+      "summary": "Audit Run 草案详情",
+      "reason": "管理端审计读取不暴露给 GEO 运营 Agent"
+    },
+    {
+      "method": "GET",
       "path": "/collector-accounts",
       "summary": "全租户采集账号绑定明细（治理视图）",
       "reason": "全租户采集账号明细超出 GEO 运营 Agent 的项目范围"
+    },
+    {
+      "method": "GET",
+      "path": "/audit-events/export",
+      "summary": "导出审计",
+      "reason": "管理端审计导出不暴露给 GEO 运营 Agent"
     }
   ]
 }

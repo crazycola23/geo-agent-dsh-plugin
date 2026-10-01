@@ -279,6 +279,18 @@ export async function executeGeoOperation({ catalog, operationName, args, baseUr
     return { ok: false, outcome: 'rejected', operation: operation.name, status: response.status, idempotencyKey, error: 'GEO returned a redirect. It was not followed to avoid forwarding credentials to another origin.' };
   }
 
+  if (operation.method !== 'GET' && response.status >= 500) {
+    return {
+      ok: false,
+      outcome: 'unknown',
+      operation: operation.name,
+      method: operation.method,
+      status: response.status,
+      idempotencyKey,
+      error: 'GEO returned an HTTP server error after the write request. Reconcile the corresponding GEO record before repeating, using the original idempotency key when the operation defines one; the plugin will not retry automatically.',
+    };
+  }
+
   let text;
   try { text = await readJsonLimited(response); }
   catch (error) {
