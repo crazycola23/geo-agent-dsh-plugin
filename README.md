@@ -40,7 +40,7 @@ dsh plugin --profile <profile> add github:crazycola23/geo-agent-dsh-plugin
 **装完在哪配置**：DSH → 插件 → 点开 `@geo-internal/geo-agent-dsh-plugin` → **GEO 工作台**卡片：
 
 1. **GEO 服务地址** —— 只填协议 + 主机 + 端口（例如 `https://geo.example.com:8443`），**不要带路径**
-2. **资料投递目录**（可选）—— 需要证据上传时填
+2. **资料投递目录** —— 需要证据上传时填
 3. **项目授权** —— 每个 GEO 项目一行，填该项目 ID + **属于该项目的** API 令牌
 
 保存后用 `geo_connection_status` 逐个项目验证绑定关系。
@@ -56,6 +56,11 @@ dsh plugin --profile <profile> add github:crazycola23/geo-agent-dsh-plugin
 - **关**：GEO 工具与其它工具同时可用（方便，但令牌与通用工具处在同一环境）
 
 切换后配置立即写入；若工具列表没有马上变化，**完全退出 DSH 再启动**一定生效。
+
+设置卡只保留完成配置所必需的信息：标题、字段、凭据状态、隔离开关与错误反馈。
+装饰性文案（页头副标题、凭据流程示意图、分区说明段落、页脚说明书引导）已删除，
+操作细节以 [`operator-guide.md`](sources/geo-workflow/references/operator-guide.md) 为准；
+`test/settings-card-restraint.test.js` 会拦住这些文案被无理由地加回来。
 
 ---
 

@@ -369,7 +369,6 @@ export function GeoSettingsCard(props: GeoSettingsCardProps): ReactNode {
         <span className={styles.brandMark} aria-hidden="true">G</span>
         <span className={styles.heading}>
           <span className={styles.title}>{t('title')}</span>
-          <span className={styles.description}>{t('description')}</span>
         </span>
         <span className={`${styles.badge} ${endpointReady && configuredProjectCount > 0 ? styles.badgeReady : ''}`}>
           <span className={styles.stateDot} />{statusCopy}
@@ -379,20 +378,11 @@ export function GeoSettingsCard(props: GeoSettingsCardProps): ReactNode {
 
       {expanded ? (
         <div className={styles.body}>
-          <div className={styles.route} aria-label="GEO 按项目使用独立身份">
-            <div className={styles.routeNode}><span className={styles.routeIcon}>G</span><span>GEO 项目</span></div>
-            <span className={styles.routeLine} />
-            <div className={styles.routeNode}><span className={styles.routeIcon}>↔</span><span>项目凭据</span></div>
-            <span className={styles.routeLine} />
-            <div className={styles.routeNode}><span className={styles.routeIcon}>B</span><span>独立 Bearer</span></div>
-            <span className={styles.routeState}>{statusCopy}</span>
-          </div>
-
           <div className={styles.section}>
             <h3 className={styles.sectionTitle}>GEO 服务</h3>
             <Field
               label="GEO 服务 IP / 域名"
-              hint="只填协议、主机和端口；业务请求直接携带项目令牌。内网地址也必须走 HTTPS。"
+              hint="仅协议、主机和端口。业务请求自带项目令牌。"
               value={apiBaseUrl}
               placeholder="https://192.168.2.110:端口"
               testId="geo-api-base-url"
@@ -401,8 +391,8 @@ export function GeoSettingsCard(props: GeoSettingsCardProps): ReactNode {
             />
             <div className={styles.twoColumns}>
               <Field
-                label="资料投递目录（可选）"
-                hint="用于 geo_upload_evidence；只允许该目录下的指定文档类型。"
+                label="资料投递目录"
+                hint="仅该目录下的文档可上传。"
                 value={evidenceDirectory}
                 placeholder="D:\\geo-evidence"
                 testId="geo-evidence-directory"
@@ -426,13 +416,12 @@ export function GeoSettingsCard(props: GeoSettingsCardProps): ReactNode {
             <div className={styles.sectionHeading}>
               <div>
                 <h3 className={styles.sectionTitle}>项目授权</h3>
-                <p className={styles.sectionHint}>每个 DSH 项目绑定一个 GEO 项目令牌；令牌在 GEO 项目档案中创建、限时并可随时撤销。</p>
               </div>
               <button className={styles.ghostButton} type="button" disabled={busy || !snapshot.writable} onClick={addProject}>＋ 添加项目</button>
             </div>
 
             {projects.length === 0 ? (
-              <div className={styles.emptyProjects}>添加项目 ID，并粘贴在 GEO 对应项目档案中创建的 API 令牌。</div>
+              <div className={styles.emptyProjects}>添加项目 ID 与该项目的 API 令牌。</div>
             ) : projects.map((project, index) => {
               const projectId = project.projectId.trim()
               const refs = validProjectId(projectId) ? credentialRefs(projectId) : undefined
@@ -456,7 +445,7 @@ export function GeoSettingsCard(props: GeoSettingsCardProps): ReactNode {
                   <div className={styles.twoColumns}>
                     <Field
                       label="项目 ID"
-                      hint="工具调用时选择同一个项目 ID，插件据此挑选凭据。"
+                      hint="调用工具时使用同一个项目 ID。"
                       value={project.projectId}
                       placeholder="例如 2100100790457094145"
                       testId={`geo-project-id-${index}`}
@@ -464,7 +453,7 @@ export function GeoSettingsCard(props: GeoSettingsCardProps): ReactNode {
                       onChange={(next) => updateProject(project.draftKey, 'projectId', next)}
                     />
                     <Field
-                      label="项目名称（可选）"
+                      label="项目名称"
                       value={project.name ?? ''}
                       placeholder="例如 品牌 A 官网增长"
                       testId={`geo-project-name-${index}`}
@@ -474,7 +463,7 @@ export function GeoSettingsCard(props: GeoSettingsCardProps): ReactNode {
                   </div>
                   <Field
                     label="该项目 API 令牌"
-                    hint="从 GEO 项目档案复制创建时显示的一次性令牌；写入 DSH Credentials 后不回显。轮换时在 GEO 撤销旧令牌并粘贴新令牌。"
+                    hint="写入后不再回显；轮换时在 GEO 撤销旧令牌后粘贴新令牌。"
                     value={project.apiToken}
                     type="password"
                     placeholder={tokenInfo?.configured ? '已安全保存；留空表示不更改' : '粘贴该项目的 geop_ 令牌'}
@@ -497,22 +486,12 @@ export function GeoSettingsCard(props: GeoSettingsCardProps): ReactNode {
               )
             })}
 
-            <div className={styles.tokenNote}>
-              <span className={styles.tokenGlyph}>B</span>
-              <span><strong>Bearer 按项目绑定</strong><br />每个项目的令牌单独保存在 DSH Credentials。连接检查会确认令牌实际绑定的 GEO 项目；页面、Skill 和工具结果不会显示令牌原文。</span>
-            </div>
             {credentialError ? <p className={styles.inlineError}>{credentialError}</p> : null}
           </div>
 
           <div className={styles.section}>
             <div className={styles.sectionHeading}>
-              <div>
-                <h3 className={styles.sectionTitle}>运行隔离</h3>
-                <p className={styles.sectionHint}>
-                  开启后，本 DSH 实例里所有 Agent 只看得见这 5 个 GEO 工具（shell、文件、浏览器等一律隐藏）；
-                  关闭则立刻恢复本实例原有的全部工具。开关即时生效，不需要重启。
-                </p>
-              </div>
+              <h3 className={styles.sectionTitle}>运行隔离</h3>
               <label className={styles.switch}>
                 <input
                   className={styles.switchInput}
@@ -529,12 +508,6 @@ export function GeoSettingsCard(props: GeoSettingsCardProps): ReactNode {
                 <span className={styles.switchLabel}>{restrictTools ? '已开启 · 仅 GEO 工具' : '已关闭 · 保留全部工具'}</span>
               </label>
             </div>
-            <p className={styles.hint}>
-              {restrictTools
-                ? '隔离生效中：本实例只暴露 GEO 的 5 个工具。'
-                : '隔离已关闭：GEO 工具与其它工具同时可用，此时 GEO 令牌与通用工具处在同一个环境里。'}
-              切换后立即写入，没变化就完全退出 DSH 再启动；需要与日常环境彻底隔开时改用独立实例（换 home 必须重启，做法见说明书）。
-            </p>
             {isolationError ? <p className={styles.inlineError}>{isolationError}</p> : null}
           </div>
 
@@ -548,15 +521,9 @@ export function GeoSettingsCard(props: GeoSettingsCardProps): ReactNode {
             >
               {busy ? '保存中…' : '保存配置'}
             </button>
-            {saved ? <span className={styles.success}>项目配置已保存；可运行连接检查确认令牌与 GEO 项目匹配。</span> : null}
+            {saved ? <span className={styles.success}>配置已保存</span> : null}
             {failure ? <span className={styles.failure} role="alert">{failure}</span> : null}
           </div>
-
-          <p className={styles.compliance}>
-            <code>geo_api</code> 与 <code>geo_connection_status</code> 每次都要指定项目 ID，检测与报告按人工节点确认。
-            <strong>说明书</strong>：DSH 里输入 <code>/geo-workflow</code>，或读
-            <code>&lt;DSH_HOME&gt;\skills\geo-workflow\references\operator-guide.md</code>。
-          </p>
         </div>
       ) : null}
     </section>

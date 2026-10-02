@@ -57,9 +57,7 @@
   line-height: 1.4;
 }
 
-.description,
-.hint,
-.compliance {
+.hint {
   color: var(--dsw-alias-label-tertiary, #6b7280);
   font-size: 12px;
   line-height: 1.5;
@@ -114,54 +112,6 @@
   padding: 0 16px 14px;
 }
 
-.route {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 12px;
-  color: var(--dsw-alias-label-secondary, #4b5563);
-  background: var(--dsw-alias-bg-layer-2, #f6f8fa);
-  border: 1px solid var(--dsw-alias-border-l2, #d0d7de);
-  border-radius: 8px;
-}
-
-.routeNode {
-  display: flex;
-  align-items: center;
-  flex: 0 0 auto;
-  gap: 6px;
-  font-size: 11px;
-  white-space: nowrap;
-}
-
-.routeIcon,
-.tokenGlyph {
-  display: grid;
-  flex: 0 0 22px;
-  width: 22px;
-  height: 22px;
-  place-items: center;
-  color: var(--dsw-alias-state-business-primary, #4f8cff);
-  font-size: 11px;
-  font-weight: 700;
-  background: color-mix(in srgb, var(--dsw-alias-state-business-primary, #4f8cff) 12%, transparent);
-  border-radius: 7px;
-}
-
-.routeLine {
-  height: 1px;
-  min-width: 10px;
-  flex: 1;
-  border-top: 1px dashed var(--dsw-alias-border-l3, #a6adb4);
-}
-
-.routeState {
-  margin-left: auto;
-  color: var(--dsw-alias-label-tertiary, #6b7280);
-  font-size: 11px;
-  white-space: nowrap;
-}
-
 .section {
   display: flex;
   flex-direction: column;
@@ -181,13 +131,6 @@
   color: var(--dsw-alias-label-primary, #1f2329);
   font-size: 13px;
   font-weight: 600;
-}
-
-.sectionHint {
-  margin: 4px 0 0;
-  color: var(--dsw-alias-label-tertiary, #6b7280);
-  font-size: 11px;
-  line-height: 1.45;
 }
 
 .emptyProjects {
@@ -301,28 +244,6 @@
   gap: 12px;
 }
 
-.tokenNote {
-  display: flex;
-  align-items: flex-start;
-  gap: 9px;
-  padding: 9px 10px;
-  color: var(--dsw-alias-label-secondary, #4b5563);
-  background: color-mix(in srgb, var(--dsw-alias-state-business-primary, #4f8cff) 6%, transparent);
-  border-left: 2px solid var(--dsw-alias-state-business-primary, #4f8cff);
-  border-radius: 5px;
-  font-size: 11px;
-  line-height: 1.5;
-}
-
-.tokenNote strong {
-  color: var(--dsw-alias-label-primary, #1f2329);
-  font-size: 12px;
-}
-
-.tokenGlyph {
-  margin-top: 1px;
-}
-
 .inlineError,
 .failure {
   margin: 0;
@@ -406,18 +327,6 @@
   line-height: 1.4;
 }
 
-.compliance {
-  margin: 0;
-  padding-top: 8px;
-  font-size: 11px;
-  border-top: 1px dashed var(--dsw-alias-border-l2, #d0d7de);
-}
-
-.compliance code {
-  color: var(--dsw-alias-label-secondary, #4b5563);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-}
-
 @media (max-width: 620px) {
   .header {
     gap: 8px;
@@ -430,20 +339,6 @@
 
   .twoColumns {
     flex-direction: column;
-  }
-
-  .route {
-    gap: 6px;
-    padding: 8px;
-  }
-
-  .routeNode {
-    gap: 4px;
-    font-size: 10px;
-  }
-
-  .routeState {
-    display: none;
   }
 
   .projectHeader {
