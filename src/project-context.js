@@ -9,16 +9,13 @@ export function projectCredentialRefs(value) {
   const projectId = normalizeProjectId(value);
   if (!projectId) throw new TypeError('projectId must be a positive GEO project identifier');
   const prefix = `GEO_PROJECT_${projectId}`;
-  return {
-    clientId: `${prefix}_CLIENT_ID`,
-    clientSecret: `${prefix}_CLIENT_SECRET`,
-  };
+  return { apiToken: `${prefix}_API_TOKEN` };
 }
 
 export function resolveProjectSelection(selectedValue, requestArgs = {}) {
   const selectedProjectId = normalizeProjectId(selectedValue);
   if (!selectedProjectId) {
-    return { ok: false, error: 'Select a valid GEO projectId to choose that project’s machine credentials.' };
+    return { ok: false, error: 'Select a valid GEO projectId to choose that project’s API token.' };
   }
 
   for (const [location, value] of [

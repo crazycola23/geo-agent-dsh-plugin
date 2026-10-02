@@ -1,0 +1,4 @@
+interface:
+  display_name: "GEO 内部运营"
+  short_description: "按当前契约执行 GEO 运营流程"
+  default_prompt: "使用 $geo-workflow 处理我指定的 GEO 项目运营任务，先检查当前状态，并在事实确认、检测、费用、发布与报告节点向我确认。"

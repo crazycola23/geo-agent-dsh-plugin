@@ -1,15 +1,112 @@
 {
-  "catalogVersion": 1,
+  "catalogVersion": 2,
   "source": {
     "file": "scrm-specs/30-contracts/08-openapi.yaml",
-    "sha256": "0229313233b4ddd49823c09735c07ab5ab26b5befa5125b7a8a5a6635c93f965"
+    "sha256": "a566e2ec70e1bbc91010b1899eae7ff8ae78c188bac889c988002c912dd4b84f"
   },
   "serverPath": "/geo",
-  "securityScheme": {
-    "type": "apiKey",
-    "in": "header",
-    "name": "Authorization",
-    "description": "复用 ruoyi-auth / Sa-Token（03 T-003）"
+  "securitySchemes": {
+    "interactive": {
+      "type": "apiKey",
+      "in": "header",
+      "name": "Authorization",
+      "description": "复用 ruoyi-auth / Sa-Token（03 T-003）"
+    },
+    "projectToken": {
+      "type": "http",
+      "scheme": "bearer",
+      "bearerFormat": "geop_",
+      "description": "D-20261001-02：项目绑定、可撤销、限时令牌；仅允许当前项目范围与签发 scopes。"
+    }
+  },
+  "projectApiTokenPolicy": {
+    "tokenPrefix": "geop_",
+    "maxLifetimeDays": 30,
+    "toolTags": [
+      "workbench",
+      "agent",
+      "project",
+      "fact",
+      "question",
+      "content",
+      "article-card",
+      "publish",
+      "detect",
+      "report",
+      "cost",
+      "audit"
+    ],
+    "readOnlyTags": [
+      "audit",
+      "cost"
+    ],
+    "excludedPathSegments": [
+      "admin",
+      "upload",
+      "file",
+      "callback",
+      "send-external"
+    ],
+    "allowedPathExceptions": [
+      "/evidence-sources/upload"
+    ],
+    "allowedScopes": [
+      "geo:project:view",
+      "geo:project:edit",
+      "geo:evidence:create",
+      "geo:fact:view",
+      "geo:fact:edit",
+      "geo:question:view",
+      "geo:question:enable",
+      "geo:content:view",
+      "geo:content:create",
+      "geo:content:regenerate",
+      "geo:articleCard:view",
+      "geo:articleCard:generate",
+      "geo:publish:view",
+      "geo:publish:confirm",
+      "geo:publish:cancel",
+      "geo:publish:republish",
+      "geo:detect:view",
+      "geo:detect:execute",
+      "geo:report:view",
+      "geo:report:create",
+      "geo:report:confirm",
+      "geo:budget:view",
+      "geo:action:confirm"
+    ],
+    "managementPaths": [
+      {
+        "method": "POST",
+        "path": "/projects/{projectId}/api-tokens"
+      },
+      {
+        "method": "GET",
+        "path": "/projects/{projectId}/api-tokens"
+      },
+      {
+        "method": "DELETE",
+        "path": "/projects/{projectId}/api-tokens/{tokenId}"
+      }
+    ],
+    "contextPath": "/auth/project-token-context",
+    "excludedToolPaths": [
+      "/projects",
+      "/projects/{projectId}/transfer-owner",
+      "/projects/{projectId}/api-tokens",
+      "/projects/{projectId}/api-tokens/{tokenId}",
+      "/auth/project-token-context",
+      "/members",
+      "/members/invitations",
+      "/members/{memberId}/accept",
+      "/members/{memberId}/revoke",
+      "/members/{memberId}",
+      "/members/{memberId}/permissions",
+      "/collector-accounts",
+      "/collector-accounts/**",
+      "/user-preferences",
+      "/user-preferences/**"
+    ]
   },
   "selectedTags": [
     "workbench",
@@ -26,31 +123,6 @@
     "audit"
   ],
   "operations": {
-    "get_workbench_summary": {
-      "name": "get_workbench_summary",
-      "method": "GET",
-      "path": "/workbench/summary",
-      "tag": "workbench",
-      "summary": "工作台聚合（S02）",
-      "description": "BR-WORKBENCH-001 异常优先；BR-WORKBENCH-002 只聚合有权限对象",
-      "permission": "geo:dashboard:view",
-      "idempotencyRule": null,
-      "parameters": [
-        {
-          "name": "projectId",
-          "in": "query",
-          "required": false,
-          "description": "不传=全部有权限项目",
-          "schema": {
-            "type": "string"
-          },
-          "style": "form",
-          "explode": true
-        }
-      ],
-      "requestBody": null,
-      "hasJsonResponse": true
-    },
     "post_agent_runs": {
       "name": "post_agent_runs",
       "method": "POST",
@@ -647,75 +719,6 @@
       "requestBody": null,
       "hasJsonResponse": true
     },
-    "get_projects": {
-      "name": "get_projects",
-      "method": "GET",
-      "path": "/projects",
-      "tag": "project",
-      "summary": "项目列表（S03）",
-      "description": "",
-      "permission": "geo:project:view",
-      "idempotencyRule": null,
-      "parameters": [
-        {
-          "name": "pageNum",
-          "in": "query",
-          "required": false,
-          "description": "",
-          "schema": {
-            "type": "integer",
-            "default": 1
-          },
-          "style": "form",
-          "explode": true
-        },
-        {
-          "name": "pageSize",
-          "in": "query",
-          "required": false,
-          "description": "",
-          "schema": {
-            "type": "integer",
-            "default": 10,
-            "maximum": 100
-          },
-          "style": "form",
-          "explode": true
-        },
-        {
-          "name": "status",
-          "in": "query",
-          "required": false,
-          "description": "05 §1 Project.status",
-          "schema": {
-            "type": "string"
-          },
-          "style": "form",
-          "explode": true
-        }
-      ],
-      "requestBody": null,
-      "hasJsonResponse": true
-    },
-    "post_projects": {
-      "name": "post_projects",
-      "method": "POST",
-      "path": "/projects",
-      "tag": "project",
-      "summary": "创建项目（保存草稿）",
-      "description": "允许保存草稿；不校验启动基线（BR-PROJECT-001）。\n提交体见 schemas.ProjectCreate。负责人（ownerUserId）选项复用 ruoyi 用户选择器（不在本 OpenAPI）；由服务端校验 eligibility，无效或越权 → GEO-40001（定位字段）。\n客户端不提交 members；项目创建成功后服务端会在同一事务为当前操作者建立 active 的 project_operator 成员关系并写 MEMBER_JOINED 审计，其他协作成员仍经 M14 邀请。\n",
-      "permission": "geo:project:create",
-      "idempotencyRule": null,
-      "parameters": [],
-      "requestBody": {
-        "required": true,
-        "contentType": "application/json",
-        "schema": {
-          "$ref": "#/components/schemas/ProjectCreate"
-        }
-      },
-      "hasJsonResponse": true
-    },
     "get_projects_by_projectid": {
       "name": "get_projects_by_projectid",
       "method": "GET",
@@ -768,49 +771,6 @@
         "contentType": "application/json",
         "schema": {
           "$ref": "#/components/schemas/ProjectUpdate"
-        }
-      },
-      "hasJsonResponse": true
-    },
-    "post_projects_by_projectid_transfer_owner": {
-      "name": "post_projects_by_projectid_transfer_owner",
-      "method": "POST",
-      "path": "/projects/{projectId}/transfer-owner",
-      "tag": "project",
-      "summary": "移交项目主运营",
-      "description": "仅当前主运营或系统管理员可调用；新负责人须为本项目有效成员（joinedAt 非空、leftAt 为空），否则 GEO-42601。\n老负责人保留为普通成员，权限回落到角色模板 + 项目内覆盖；主运营仍不可被直接移除。\nversion 做 geo_project CAS，冲突 → GEO-40902；与当前主运营相同 → GEO-40001。\n",
-      "permission": "geo:project:edit",
-      "idempotencyRule": "required: projectId + transfer-owner + version + newOwnerUserId",
-      "parameters": [
-        {
-          "name": "projectId",
-          "in": "path",
-          "required": true,
-          "description": "",
-          "schema": {
-            "type": "string"
-          },
-          "style": "form",
-          "explode": true
-        },
-        {
-          "name": "X-Idempotency-Key",
-          "in": "header",
-          "required": true,
-          "description": "T-OPEN-10：归档/恢复动作使用 UUID；同一项目 + 动作 + version + reason 在 24h 内重放首次响应，不重复推进状态或追加审计",
-          "schema": {
-            "type": "string",
-            "format": "uuid"
-          },
-          "style": "form",
-          "explode": true
-        }
-      ],
-      "requestBody": {
-        "required": true,
-        "contentType": "application/json",
-        "schema": {
-          "$ref": "#/components/schemas/ProjectTransferOwner"
         }
       },
       "hasJsonResponse": true
@@ -897,75 +857,6 @@
           "name": "projectId",
           "in": "path",
           "required": true,
-          "description": "",
-          "schema": {
-            "type": "string"
-          },
-          "style": "form",
-          "explode": true
-        }
-      ],
-      "requestBody": null,
-      "hasJsonResponse": true
-    },
-    "post_customers": {
-      "name": "post_customers",
-      "method": "POST",
-      "path": "/customers",
-      "tag": "project",
-      "summary": "新增客户主体（M01 子弹窗）",
-      "description": "M01 在没有可选 Customer 时创建客户主体基础资料，保存成功后回填客户选择器。\nCustomer 是独立对象；本接口不修改已有 Project 的 customerId，也不修改客户级 FactRevision 或 ProjectFactReference（D-05、AC-PROJECT-005）。\n",
-      "permission": "geo:project:create",
-      "idempotencyRule": "optional: transport replay protection; same key returns the first response",
-      "parameters": [],
-      "requestBody": {
-        "required": true,
-        "contentType": "application/json",
-        "schema": {
-          "$ref": "#/components/schemas/CustomerCreate"
-        }
-      },
-      "hasJsonResponse": true
-    },
-    "get_customers": {
-      "name": "get_customers",
-      "method": "GET",
-      "path": "/customers",
-      "tag": "project",
-      "summary": "客户选择器（M01）",
-      "description": "M01 选择归属客户。D-05 已关闭：本接口仅返回可选客户主体；客户级事实授权通过独立事实权限与引用接口校验。\n",
-      "permission": "geo:project:create",
-      "idempotencyRule": null,
-      "parameters": [
-        {
-          "name": "pageNum",
-          "in": "query",
-          "required": false,
-          "description": "",
-          "schema": {
-            "type": "integer",
-            "default": 1
-          },
-          "style": "form",
-          "explode": true
-        },
-        {
-          "name": "pageSize",
-          "in": "query",
-          "required": false,
-          "description": "",
-          "schema": {
-            "type": "integer",
-            "default": 10,
-            "maximum": 100
-          },
-          "style": "form",
-          "explode": true
-        },
-        {
-          "name": "keyword",
-          "in": "query",
-          "required": false,
           "description": "",
           "schema": {
             "type": "string"
@@ -1962,168 +1853,6 @@
         "contentType": "application/json",
         "schema": {
           "$ref": "#/components/schemas/FactRevisionReasonAction"
-        }
-      },
-      "hasJsonResponse": true
-    },
-    "get_projects_by_projectid_fact_references": {
-      "name": "get_projects_by_projectid_fact_references",
-      "method": "GET",
-      "path": "/projects/{projectId}/fact-references",
-      "tag": "fact",
-      "summary": "当前项目的客户事实引用",
-      "description": "D-05 / BR-FACT-008：只返回当前项目已绑定的 Customer FactRevision；每行锁定 factRevisionId 与引用状态。",
-      "permission": "geo:fact:customer:view",
-      "idempotencyRule": null,
-      "parameters": [
-        {
-          "name": "projectId",
-          "in": "path",
-          "required": true,
-          "description": "",
-          "schema": {
-            "type": "string"
-          },
-          "style": "form",
-          "explode": true
-        },
-        {
-          "name": "pageNum",
-          "in": "query",
-          "required": false,
-          "description": "",
-          "schema": {
-            "type": "integer",
-            "default": 1
-          },
-          "style": "form",
-          "explode": true
-        },
-        {
-          "name": "pageSize",
-          "in": "query",
-          "required": false,
-          "description": "",
-          "schema": {
-            "type": "integer",
-            "default": 10,
-            "maximum": 100
-          },
-          "style": "form",
-          "explode": true
-        },
-        {
-          "name": "status",
-          "in": "query",
-          "required": false,
-          "description": "",
-          "schema": {
-            "type": "string",
-            "enum": [
-              "active",
-              "revoked"
-            ]
-          },
-          "style": "form",
-          "explode": true
-        }
-      ],
-      "requestBody": null,
-      "hasJsonResponse": true
-    },
-    "post_projects_by_projectid_fact_references": {
-      "name": "post_projects_by_projectid_fact_references",
-      "method": "POST",
-      "path": "/projects/{projectId}/fact-references",
-      "tag": "fact",
-      "summary": "绑定客户级事实修订",
-      "description": "只允许绑定同 Customer 的 fact_scope=customer FactRevision；必须满足 publiclyUsable、项目对象范围、projectVersion 与幂等键；跨 Customer / 项目专属事实 → GEO-42210。",
-      "permission": "geo:fact:customer:bind",
-      "idempotencyRule": null,
-      "parameters": [
-        {
-          "name": "projectId",
-          "in": "path",
-          "required": true,
-          "description": "",
-          "schema": {
-            "type": "string"
-          },
-          "style": "form",
-          "explode": true
-        },
-        {
-          "name": "X-Idempotency-Key",
-          "in": "header",
-          "required": true,
-          "description": "事实修订或项目事实引用写动作必填；同一资源 + 动作 + 24h 内重复返回首次响应体与首次 HTTP 状态。",
-          "schema": {
-            "type": "string",
-            "format": "uuid"
-          },
-          "style": "form",
-          "explode": true
-        }
-      ],
-      "requestBody": {
-        "required": true,
-        "contentType": "application/json",
-        "schema": {
-          "$ref": "#/components/schemas/ProjectFactReferenceCreate"
-        }
-      },
-      "hasJsonResponse": true
-    },
-    "post_projects_by_projectid_fact_references_by_referenceid_revoke": {
-      "name": "post_projects_by_projectid_fact_references_by_referenceid_revoke",
-      "method": "POST",
-      "path": "/projects/{projectId}/fact-references/{referenceId}/revoke",
-      "tag": "fact",
-      "summary": "撤销客户级事实引用",
-      "description": "只改变 ProjectFactReference 状态，不修改 FactRevision；已有文章保留历史并按 BR-FACT-004 在同一事务内置 evidenceRisk、去重创建 geo_action 并追加审计。",
-      "permission": "geo:fact:customer:bind",
-      "idempotencyRule": null,
-      "parameters": [
-        {
-          "name": "projectId",
-          "in": "path",
-          "required": true,
-          "description": "",
-          "schema": {
-            "type": "string"
-          },
-          "style": "form",
-          "explode": true
-        },
-        {
-          "name": "referenceId",
-          "in": "path",
-          "required": true,
-          "description": "",
-          "schema": {
-            "type": "string"
-          },
-          "style": "form",
-          "explode": true
-        },
-        {
-          "name": "X-Idempotency-Key",
-          "in": "header",
-          "required": true,
-          "description": "事实修订或项目事实引用写动作必填；同一资源 + 动作 + 24h 内重复返回首次响应体与首次 HTTP 状态。",
-          "schema": {
-            "type": "string",
-            "format": "uuid"
-          },
-          "style": "form",
-          "explode": true
-        }
-      ],
-      "requestBody": {
-        "required": true,
-        "contentType": "application/json",
-        "schema": {
-          "$ref": "#/components/schemas/ProjectFactReferenceRevoke"
         }
       },
       "hasJsonResponse": true
@@ -4012,205 +3741,6 @@
       "requestBody": null,
       "hasJsonResponse": true
     },
-    "post_platform_accounts": {
-      "name": "post_platform_accounts",
-      "method": "POST",
-      "path": "/platform-accounts",
-      "tag": "project",
-      "summary": "绑定客户平台账号",
-      "description": "T-OPEN-35/G-28：绑定一个客户平台账号到当前项目。GEO 页面新建绑定时生成 128 位随机 envKey（32 位小写十六进制）；API 仍允许已有 envKey 用于兼容旧本机环境。envKey 是标识符而非路径。一账号一环境：envKey 在租户内已占用返回 GEO-40001。同项目同平台首个账号自动成为默认。写操作要求同项目 geo:platform-account:launch（高风险，不可继承）。",
-      "permission": "geo:platform-account:launch",
-      "idempotencyRule": null,
-      "parameters": [],
-      "requestBody": {
-        "required": true,
-        "contentType": "application/json",
-        "schema": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "projectId",
-            "platformCode",
-            "envKey",
-            "label"
-          ],
-          "properties": {
-            "projectId": {
-              "type": "integer",
-              "minimum": 1
-            },
-            "platformCode": {
-              "type": "string",
-              "enum": [
-                "douyin",
-                "netease_news",
-                "toutiao",
-                "baijiahao"
-              ],
-              "description": "05 §14.2 PlatformAccountPlatformCode；未登记的值一律 GEO-40001"
-            },
-            "envKey": {
-              "type": "string",
-              "pattern": "^[A-Za-z0-9._-]{1,64}$",
-              "description": "环境标识；新建时由页面生成 32 位小写十六进制随机值；复用已有本机环境时可提交原 envKey；不得含 `..`，不得是 `.` 或 `..`"
-            },
-            "label": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 100,
-              "description": "用户自填展示名（客户账号别名）"
-            },
-            "makeDefault": {
-              "type": "boolean",
-              "default": false
-            }
-          }
-        }
-      },
-      "hasJsonResponse": true
-    },
-    "put_platform_accounts": {
-      "name": "put_platform_accounts",
-      "method": "PUT",
-      "path": "/platform-accounts",
-      "tag": "project",
-      "summary": "修改客户平台账号绑定",
-      "description": "T-OPEN-35/G-28：改别名与环境标识，**带乐观锁**（conventions.md §4.2）——version 必填，CAS 失败返回 GEO-40902，不静默覆盖。写操作要求同项目 geo:platform-account:launch。用 PUT 而非 PATCH —— 前端 alovaInstance 只挂了 get/post/put/delete。",
-      "permission": "geo:platform-account:launch",
-      "idempotencyRule": null,
-      "parameters": [],
-      "requestBody": {
-        "required": true,
-        "contentType": "application/json",
-        "schema": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "id",
-            "envKey",
-            "label",
-            "version"
-          ],
-          "properties": {
-            "id": {
-              "type": "integer",
-              "minimum": 1
-            },
-            "envKey": {
-              "type": "string",
-              "pattern": "^[A-Za-z0-9._-]{1,64}$"
-            },
-            "label": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 100
-            },
-            "version": {
-              "type": "integer",
-              "minimum": 0,
-              "description": "乐观锁版本；来自 GET 响应的 version"
-            }
-          }
-        }
-      },
-      "hasJsonResponse": true
-    },
-    "delete_platform_accounts": {
-      "name": "delete_platform_accounts",
-      "method": "DELETE",
-      "path": "/platform-accounts",
-      "tag": "project",
-      "summary": "解除客户平台账号绑定",
-      "description": "T-OPEN-35/G-28：逻辑删除，台账行保留以便审计对账。**不删本机 profile 目录** —— 里面是客户的登录态，物理删除属不可逆的运维动作。写操作要求同项目 geo:platform-account:launch。",
-      "permission": "geo:platform-account:launch",
-      "idempotencyRule": null,
-      "parameters": [
-        {
-          "name": "id",
-          "in": "query",
-          "required": true,
-          "description": "",
-          "schema": {
-            "type": "integer",
-            "minimum": 1
-          },
-          "style": "form",
-          "explode": true
-        }
-      ],
-      "requestBody": null,
-      "hasJsonResponse": true
-    },
-    "post_platform_accounts_default": {
-      "name": "post_platform_accounts_default",
-      "method": "POST",
-      "path": "/platform-accounts/default",
-      "tag": "project",
-      "summary": "设为该平台默认账号",
-      "description": "T-OPEN-35/G-28：把同 (项目, 平台) 组内其它账号降级后再置位，保证默认唯一。写操作要求同项目 geo:platform-account:launch。",
-      "permission": "geo:platform-account:launch",
-      "idempotencyRule": null,
-      "parameters": [
-        {
-          "name": "id",
-          "in": "query",
-          "required": true,
-          "description": "",
-          "schema": {
-            "type": "integer",
-            "minimum": 1
-          },
-          "style": "form",
-          "explode": true
-        }
-      ],
-      "requestBody": null,
-      "hasJsonResponse": true
-    },
-    "post_platform_accounts_launch": {
-      "name": "post_platform_accounts_launch",
-      "method": "POST",
-      "path": "/platform-accounts/launch",
-      "tag": "project",
-      "summary": "签发打开客户平台账号的动作",
-      "description": "T-OPEN-35/G-28：**必须显式提供 projectId** —— 不给项目就没有目标，这正是隔离模型的落点（系统里不存在「当前客户账号」这种环境态）。省略 accountId 时按 (projectId, platformCode) 解析该项目的默认账号；指定 accountId 时校验它属于该 projectId 且平台匹配，跨项目返回 GEO-40302。审计事件 PLATFORM_ACCOUNT_LAUNCHED 只表示「签发了打开动作」，**不表示登录态有效，也不表示用户在平台上做了什么**。写操作要求同项目 geo:platform-account:launch（高风险）。",
-      "permission": "geo:platform-account:launch",
-      "idempotencyRule": null,
-      "parameters": [],
-      "requestBody": {
-        "required": true,
-        "contentType": "application/json",
-        "schema": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "projectId",
-            "platformCode"
-          ],
-          "properties": {
-            "projectId": {
-              "type": "integer",
-              "minimum": 1
-            },
-            "platformCode": {
-              "type": "string",
-              "enum": [
-                "douyin",
-                "netease_news",
-                "toutiao",
-                "baijiahao"
-              ]
-            },
-            "accountId": {
-              "type": "integer",
-              "minimum": 1,
-              "description": "可空：空则解析该项目的默认账号"
-            }
-          }
-        }
-      },
-      "hasJsonResponse": true
-    },
     "get_media_favorites": {
       "name": "get_media_favorites",
       "method": "GET",
@@ -5223,7 +4753,7 @@
       "path": "/detect-records/statistics",
       "tag": "detect",
       "summary": "检测记录与 OneGl 历史统计（S11 Tab3）",
-      "description": "S11 历史统计只读聚合：GEO 五项信号仍按 DetectRecord 原口径展示，OneGl 原生统计从关联 Task Dashboard 汇总，\n两者不得混为同一个分数。缺少合法分母或上游数据时返回 null，前端必须显示 N/A/—，不得补成 0。\nOneGl 汇总只读取最近 100 个关联任务，并通过 truncated 明示是否截断；它不触发采集、重试或 AI 分析。\n",
+      "description": "S11 历史统计只读聚合：GEO 五项信号仍按 DetectRecord 原口径展示，OneGl 原生统计从关联 Task Dashboard 汇总，\n两者不得混为同一个分数。缺少合法分母或上游数据时返回 null，前端必须显示 N/A/—，不得补成 0。\nOneGl 汇总只读取最近 100 个关联任务，并通过 truncated 明示是否截断；它不触发采集、重试或 AI 分析。\n\n**OneGl 只读投影的 60 秒缓存（2026-10-01 补）**：本接口要为该项目下每个检测任务\n各取一次 OneGl task dashboard（每次都是项目级聚合），而相当一部分历史引用在 OneGl\n已不存在。GEO 侧对 `task dashboard` 与 `result` 两个只读投影做 **60 秒 TTL 的进程内缓存，\n成功与失败都缓存**（`OneGlReadCache`，TTL 取法与 `GeoMediaAdmissionSnapshotCache` 一致）。\n目的是消除两个实测问题：① 同一页面刷新两次合计值不同（部分调用瞬时失败导致）；\n② 已失效的引用被每次请求重复重试。\n**语义代价必须知晓**：TTL 内调「刷新」拿到的是上一次的结果——这里的数据是历史统计、\n不是实时指标，60 秒的一致窗口是有意的取舍。缓存**不改变任何口径**：取到什么返回什么，\n取不到返回 `null`，不补零、不猜测。\n\n**趋势序列（2026-10-01 补，G-44）**：`granularity=day|week` 时额外返回 `series[]`，\n让运营看到可见度**随时间的变化**——合计值说明不了趋势。\n\n数据源是 OneGl **既有**的 `GET /tasks/{id}/dashboard` 响应里的 `trends.visibility`。\n\n- **按日期累加各检测任务的计数**（`runs` / `brand_mentions`），比率随后由累加后的\n  计数重算（`mentions / runs`）。之所以是累加而不是「取一份」：GEO 的检测任务在\n  OneGl 侧**分属不同项目**（一个项目一个 task，实测 16 个 task 落在 9 个项目），\n  每个 task 的序列是**它自己那个项目**的，彼此不同；取其中任意一份都只是\n  「某一个项目的趋势」，且受迭代顺序影响、不稳定——那是误导。\n- 累加的只能是**计数**，比率不可相加、也不可求平均。\n- **`series` 只包含「有测量数据的日期」**。缺失日期**保持缺失**，不补点、不补 0、\n  不跨日插值；前端必须把缺口渲染成断点，不得连成一条连续线（`BR-DETECT-008`）。\n- `series = null` 表示**上游一个响应都没拿到**；`series = []` 表示**拿到了响应但窗口内无计数**。\n  两者语义不同，前端必须分别渲染（前者「趋势暂不可用」，后者「这段时间没有检测」）——\n  把上游故障说成「没有检测」会让读者以为工作白做了。\n- 部分检测任务读取失败时趋势只覆盖成功的那些，**数字会因此在两次刷新间变化**：\n  前端必须写明覆盖范围（`availableTaskCount` / `taskCount`），不得让读者以为数据本身在动。\n- `visibilityRate` 分母为 0 时保持 `null`，**不得补 0**（`N-07`、`N-09`、`BR-DETECT-010`）。\n- `granularity=week` 由服务端把**日内计数相加**后按 `mentions / runs` 重算比率，\n  不跨项目合并（`BR-DETECT-009`）。\n  **注意**：S11 前端**不使用**该参数——它固定取 `day` 并在本地派生出周桶\n  （`bucketTrendByWeek`）。原因是切换粒度若重新请求本接口，会连带重跑该项目下\n  **全部**检测任务的 OneGl 聚合（实测 16 次重量级调用），连续切换几次就把上游\n  压垮、趋势整个消失（实测第 3 次必失败）。该参数保留给其他 API 消费方。\n- `from` / `to` 为闭区间日期；缺省按最近 30 天，用于裁掉区间外的点。\n- **趋势与上方合计值是两套口径**：`onegl` 来自各自的 `overview`，`series` 来自\n  `trends.visibility`；两者虽都以「该项目下各检测任务」为单位，但**字段来源不同**。\n  前端必须分别标注来源，不得把两者的数字并排放成同一指标。\n- **不要**改走 `/projects/{id}/intelligence`：OneGl 的项目 ID 与 GEO 的 `projectId`\n  是两套命名空间（OneGl 为 147/504 类小整数，GEO 为雪花 ID），GEO 侧没有该映射，\n  实测会抛 `OneGlApiException`。\n",
       "permission": "geo:detect:view",
       "idempotencyRule": null,
       "parameters": [
@@ -5234,6 +4764,45 @@
           "description": "",
           "schema": {
             "type": "string"
+          },
+          "style": "form",
+          "explode": true
+        },
+        {
+          "name": "granularity",
+          "in": "query",
+          "required": false,
+          "description": "`day` | `week`。给出时返回 `series[]` 时间序列；不给只返回原有合计值\n（保持既有调用方行为不变）。\n",
+          "schema": {
+            "type": "string",
+            "enum": [
+              "day",
+              "week"
+            ]
+          },
+          "style": "form",
+          "explode": true
+        },
+        {
+          "name": "from",
+          "in": "query",
+          "required": false,
+          "description": "趋势窗口起始日（闭区间）；缺省为最近 30 天。",
+          "schema": {
+            "type": "string",
+            "format": "date"
+          },
+          "style": "form",
+          "explode": true
+        },
+        {
+          "name": "to",
+          "in": "query",
+          "required": false,
+          "description": "趋势窗口结束日（闭区间）；缺省为今天。",
+          "schema": {
+            "type": "string",
+            "format": "date"
           },
           "style": "form",
           "explode": true
@@ -5353,7 +4922,7 @@
           "name": "runExecutionId",
           "in": "query",
           "required": false,
-          "description": "本次运行内的 GEO 执行组编号；仅选择分析快照的平台范围，不改变运行范围、进度或逐条结果。其他运行的执行组返回 GEO-40401。省略时保留最新归档选择，并通过 provenance 明确实际平台。",
+          "description": "本次运行内的 GEO 执行组编号；仅选择分析快照的平台范围，不改变运行范围、进度或逐条结果。其他运行的执行组返回 GEO-40401。省略时保留最新归档选择，并通过 provenance 明确实际平台。⚠ 服务端当前按 Long 接收（GeoRunReportController），与本处的 string 声明不一致；且它与 CustomerGeoReportLink.oneglTaskGroupId（OneGl 的 grp_xxx）无映射，不得互传（G-45）。",
           "schema": {
             "type": "string"
           },
@@ -6123,345 +5692,6 @@
       "requestBody": null,
       "hasJsonResponse": true
     },
-    "get_members_my_permissions": {
-      "name": "get_members_my_permissions",
-      "method": "GET",
-      "path": "/members/my-permissions",
-      "tag": "project",
-      "summary": "当前用户在项目中的有效权限",
-      "description": "BR-AUDIT-011：返回指定项目的角色、项目身份和有效动作权限；用于项目切换后的界面裁剪，服务端业务接口仍独立鉴权。",
-      "permission": "geo:project:view",
-      "idempotencyRule": null,
-      "parameters": [
-        {
-          "name": "projectId",
-          "in": "query",
-          "required": true,
-          "description": "当前项目范围",
-          "schema": {
-            "type": "string",
-            "minLength": 1
-          },
-          "style": "form",
-          "explode": true
-        }
-      ],
-      "requestBody": null,
-      "hasJsonResponse": true
-    },
-    "get_members": {
-      "name": "get_members",
-      "method": "GET",
-      "path": "/members",
-      "tag": "project",
-      "summary": "成员与权限矩阵（S12 Tab1）",
-      "description": "成员状态派生自 joined_at / left_at（BR-AUDIT-006；invite_pending/active/removed，见 05 MembershipStatus）。\nC 区权限矩阵按当前 projectId 范围读取 geo_member_permission（BR-AUDIT-007）；无授权行即全关。\nprojectId 是当前项目范围，不支持跨项目聚合或批量修改。\n超级管理员或具备 `geo:management:view` 的管理层可在当前租户查看任意项目的成员矩阵；项目成员账号只能查看自己可访问的项目。\n",
-      "permission": "geo:project:view",
-      "idempotencyRule": null,
-      "parameters": [
-        {
-          "name": "pageNum",
-          "in": "query",
-          "required": false,
-          "description": "",
-          "schema": {
-            "type": "integer",
-            "default": 1
-          },
-          "style": "form",
-          "explode": true
-        },
-        {
-          "name": "pageSize",
-          "in": "query",
-          "required": false,
-          "description": "",
-          "schema": {
-            "type": "integer",
-            "default": 10,
-            "maximum": 100
-          },
-          "style": "form",
-          "explode": true
-        },
-        {
-          "name": "projectId",
-          "in": "query",
-          "required": true,
-          "description": "当前项目范围；成员行与权限矩阵均只基于该项目",
-          "schema": {
-            "type": "string"
-          },
-          "style": "form",
-          "explode": true
-        }
-      ],
-      "requestBody": null,
-      "hasJsonResponse": true
-    },
-    "post_members": {
-      "name": "post_members",
-      "method": "POST",
-      "path": "/members",
-      "tag": "project",
-      "summary": "邀请成员（M14）",
-      "description": "BR-AUDIT-006 邀请创建 invite_pending（joined_at/left_at 均空），P0 不自动过期。\n已有 SCRM User 账号可直接复用；邀请不会修改其原有系统角色，只为所选项目创建 invite_pending 的 ProjectMembership。未接受邀请前不进入项目可见范围。\nAC-RBAC-002 邀请时选择的角色只写入安全的初始 geo_member_permission 快照，高风险权限仍默认关闭；创建者可在邀请后逐项编辑。\n项目运营负责人可以治理自己负责项目的成员；超级管理员可以跨项目治理；管理层仅可查看。\n",
-      "permission": null,
-      "idempotencyRule": "required: projectId + userId + roleCode + X-Idempotency-Key",
-      "parameters": [
-        {
-          "name": "X-Idempotency-Key",
-          "in": "header",
-          "required": true,
-          "description": "T-17 成员生命周期 / 邀请写动作必填；同一成员 + 动作 + version + 24h 内重复返回首次响应，不重复推进状态或追加审计。",
-          "schema": {
-            "type": "string",
-            "format": "uuid"
-          },
-          "style": "form",
-          "explode": true
-        }
-      ],
-      "requestBody": {
-        "required": true,
-        "contentType": "application/json",
-        "schema": {
-          "$ref": "#/components/schemas/MemberInvite"
-        }
-      },
-      "hasJsonResponse": true
-    },
-    "get_members_invitations": {
-      "name": "get_members_invitations",
-      "method": "GET",
-      "path": "/members/invitations",
-      "tag": "project",
-      "summary": "当前账号的待处理项目邀请",
-      "description": "新建的外部账号没有任何项目范围时，仍可通过此自助入口读取发给自己的 invite_pending 邀请。\n待接受邀请不计入项目列表；接受后才会进入项目可见范围。接口不返回其他成员或项目业务数据。\n",
-      "permission": null,
-      "idempotencyRule": null,
-      "parameters": [
-        {
-          "name": "pageNum",
-          "in": "query",
-          "required": false,
-          "description": "",
-          "schema": {
-            "type": "integer",
-            "default": 1
-          },
-          "style": "form",
-          "explode": true
-        },
-        {
-          "name": "pageSize",
-          "in": "query",
-          "required": false,
-          "description": "",
-          "schema": {
-            "type": "integer",
-            "default": 10,
-            "maximum": 100
-          },
-          "style": "form",
-          "explode": true
-        }
-      ],
-      "requestBody": null,
-      "hasJsonResponse": true
-    },
-    "get_user_preferences": {
-      "name": "get_user_preferences",
-      "method": "GET",
-      "path": "/user-preferences",
-      "tag": "project",
-      "summary": "当前账号的用户级偏好",
-      "description": "T-OPEN-20：返回当前账号最近一次选择的项目，供登录后跨浏览器、跨设备恢复项目上下文。\n服务端在读取时校验该项目是否仍对当前账号可见；已删除或已不可见时清除该字段并返回 null，\n前端据此静默回落，不提示失效。这是账号自读入口，不要求项目权限码。\n",
-      "permission": null,
-      "idempotencyRule": null,
-      "parameters": [],
-      "requestBody": null,
-      "hasJsonResponse": true
-    },
-    "put_user_preferences_active_project": {
-      "name": "put_user_preferences_active_project",
-      "method": "PUT",
-      "path": "/user-preferences/active-project",
-      "tag": "project",
-      "summary": "保存当前账号的项目上下文",
-      "description": "T-OPEN-20：记录最近一次选择的项目，`projectId` 传 null 表示清除。\n写入前按当前账号对该项目的可见性校验，不可见返回 `GEO-40302`，不得保存不可见项目。\n该动作只影响当前账号自己的偏好：不改项目数据、不写业务审计、不做幂等键约束，\n并发按后写覆盖处理（项目上下文可自愈，下一次选择即可纠正）。\n",
-      "permission": null,
-      "idempotencyRule": null,
-      "parameters": [],
-      "requestBody": {
-        "required": true,
-        "contentType": "application/json",
-        "schema": {
-          "$ref": "#/components/schemas/UserPreferenceUpdate"
-        }
-      },
-      "hasJsonResponse": true
-    },
-    "post_members_by_id_accept": {
-      "name": "post_members_by_id_accept",
-      "method": "POST",
-      "path": "/members/{id}/accept",
-      "tag": "project",
-      "summary": "接受成员邀请",
-      "description": "BR-AUDIT-006：仅当前登录用户等于 membership.user_id 时可将 invite_pending 接受为 active。\n这是身份绑定的自助动作，不要求 geo:member:manage；接受只改变成员状态，不新增权限行。\n",
-      "permission": null,
-      "idempotencyRule": "required: membership + accept + version",
-      "parameters": [
-        {
-          "name": "id",
-          "in": "path",
-          "required": true,
-          "description": "雪花 ID 字符串（conventions §7）",
-          "schema": {
-            "type": "string"
-          },
-          "style": "form",
-          "explode": true
-        },
-        {
-          "name": "X-Idempotency-Key",
-          "in": "header",
-          "required": true,
-          "description": "T-17 成员生命周期 / 邀请写动作必填；同一成员 + 动作 + version + 24h 内重复返回首次响应，不重复推进状态或追加审计。",
-          "schema": {
-            "type": "string",
-            "format": "uuid"
-          },
-          "style": "form",
-          "explode": true
-        }
-      ],
-      "requestBody": {
-        "required": true,
-        "contentType": "application/json",
-        "schema": {
-          "$ref": "#/components/schemas/MemberLifecycleAction"
-        }
-      },
-      "hasJsonResponse": true
-    },
-    "post_members_by_id_revoke_invite": {
-      "name": "post_members_by_id_revoke_invite",
-      "method": "POST",
-      "path": "/members/{id}/revoke-invite",
-      "tag": "project",
-      "summary": "撤销或拒绝成员邀请",
-      "description": "BR-AUDIT-006：目标必须为 invite_pending；邀请对象本人可拒绝，项目成员管理者可撤销。\n两种来源均转为 removed、保持 joined_at 为空，并复用 MEMBER_INVITE_REVOKED 审计事件；不自动过期。\n",
-      "permission": null,
-      "idempotencyRule": "required: membership + revoke-invite + version",
-      "parameters": [
-        {
-          "name": "id",
-          "in": "path",
-          "required": true,
-          "description": "雪花 ID 字符串（conventions §7）",
-          "schema": {
-            "type": "string"
-          },
-          "style": "form",
-          "explode": true
-        },
-        {
-          "name": "X-Idempotency-Key",
-          "in": "header",
-          "required": true,
-          "description": "T-17 成员生命周期 / 邀请写动作必填；同一成员 + 动作 + version + 24h 内重复返回首次响应，不重复推进状态或追加审计。",
-          "schema": {
-            "type": "string",
-            "format": "uuid"
-          },
-          "style": "form",
-          "explode": true
-        }
-      ],
-      "requestBody": {
-        "required": true,
-        "contentType": "application/json",
-        "schema": {
-          "$ref": "#/components/schemas/MemberLifecycleAction"
-        }
-      },
-      "hasJsonResponse": true
-    },
-    "post_members_by_id_remove": {
-      "name": "post_members_by_id_remove",
-      "method": "POST",
-      "path": "/members/{id}/remove",
-      "tag": "project",
-      "summary": "移除活跃成员",
-      "description": "BR-AUDIT-006：目标必须为 active；需要当前项目运营负责人/创建者和当前项目对象范围，或超级管理员跨项目治理。\n只写 left_at 转为 removed，保留历史成员行和已有 geo_member_permission 行；不提供恢复接口。\n管理层只读查看项目，不作为项目成员管理员。\n",
-      "permission": null,
-      "idempotencyRule": "required: membership + remove + version",
-      "parameters": [
-        {
-          "name": "id",
-          "in": "path",
-          "required": true,
-          "description": "雪花 ID 字符串（conventions §7）",
-          "schema": {
-            "type": "string"
-          },
-          "style": "form",
-          "explode": true
-        },
-        {
-          "name": "X-Idempotency-Key",
-          "in": "header",
-          "required": true,
-          "description": "T-17 成员生命周期 / 邀请写动作必填；同一成员 + 动作 + version + 24h 内重复返回首次响应，不重复推进状态或追加审计。",
-          "schema": {
-            "type": "string",
-            "format": "uuid"
-          },
-          "style": "form",
-          "explode": true
-        }
-      ],
-      "requestBody": {
-        "required": true,
-        "contentType": "application/json",
-        "schema": {
-          "$ref": "#/components/schemas/MemberLifecycleAction"
-        }
-      },
-      "hasJsonResponse": true
-    },
-    "put_members_by_id_permissions": {
-      "name": "put_members_by_id_permissions",
-      "method": "PUT",
-      "path": "/members/{id}/permissions",
-      "tag": "project",
-      "summary": "修改成员动作权限",
-      "description": "权限码必须来自 07-权限码与路由清单.yaml，未知码 → GEO-40001\n邀请时角色只能作为安全的初始权限快照；高风险码不得由快捷角色默认授予，创建者仍需逐项编辑（BR-AUDIT-001）\n存储与三层校验见 BR-AUDIT-007：写指定 projectId 下的 geo_member_permission.enabled（带 version），同事务写 PERMISSION_CHANGED；removed 成员授权行保留但校验拒绝。\nprojectId 与成员 id 必须匹配；只修改该成员在该项目中的单个权限，不影响其在其他项目的权限。\n当前项目运营负责人可维护本项目矩阵；超级管理员可跨项目治理；管理层只读查看，不会因全量查看获得项目动作权限。\n",
-      "permission": null,
-      "idempotencyRule": null,
-      "parameters": [
-        {
-          "name": "id",
-          "in": "path",
-          "required": true,
-          "description": "雪花 ID 字符串（conventions §7）",
-          "schema": {
-            "type": "string"
-          },
-          "style": "form",
-          "explode": true
-        }
-      ],
-      "requestBody": {
-        "required": true,
-        "contentType": "application/json",
-        "schema": {
-          "$ref": "#/components/schemas/MemberPermissionUpdate"
-        }
-      },
-      "hasJsonResponse": true
-    },
     "get_monitoring_runs": {
       "name": "get_monitoring_runs",
       "method": "GET",
@@ -6547,155 +5777,6 @@
       "permission": "geo:detect:view",
       "idempotencyRule": null,
       "parameters": [],
-      "requestBody": null,
-      "hasJsonResponse": true
-    },
-    "get_onegl_accounts": {
-      "name": "get_onegl_accounts",
-      "method": "GET",
-      "path": "/onegl/accounts",
-      "tag": "detect",
-      "summary": "我可见的豆包采集账号",
-      "description": "默认只返回调用者本人的绑定及其派生可用性；持 `geo:collector:account:admin` 时返回全租户绑定。\n采集器未启用时整个控制器不注册，404 属预期，前端按「未启用」提示而非报错。\n",
-      "permission": "geo:collector:account:manage",
-      "idempotencyRule": null,
-      "parameters": [],
-      "requestBody": null,
-      "hasJsonResponse": true
-    },
-    "delete_onegl_accounts_by_accountid": {
-      "name": "delete_onegl_accounts_by_accountid",
-      "method": "DELETE",
-      "path": "/onegl/accounts/{accountId}",
-      "tag": "detect",
-      "summary": "解绑本人的豆包采集账号",
-      "description": "置 `revoked_at`，**不物理删除**：历史 DetectionAttempt 的采集身份必须保持可追溯。\n解绑即让位 —— 该用户下一次扫码会新建一条**新一代**绑定（`generation` 递增，\n`external_account_id` 为 `geo_u{userId}_g{n}`），因此换豆包账号是自助可完成的（T-OPEN-26 §8）。\n本操作追加 `geo_audit_event`；其 action 取值须先在 `05 §16` 登记后才可写入本契约（N-01），\n故此处暂不声明 `x-audit`，待服务端实现批次一并登记。\n",
-      "permission": "geo:collector:account:manage",
-      "idempotencyRule": null,
-      "parameters": [
-        {
-          "name": "accountId",
-          "in": "path",
-          "required": true,
-          "description": "OneGl account_id；服务端校验其确属调用者本人绑定，否则 403",
-          "schema": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 64
-          },
-          "style": "form",
-          "explode": true
-        }
-      ],
-      "requestBody": null,
-      "hasJsonResponse": true
-    },
-    "post_onegl_auth_sessions": {
-      "name": "post_onegl_auth_sessions",
-      "method": "POST",
-      "path": "/onegl/auth-sessions",
-      "tag": "detect",
-      "summary": "为本人绑定的采集账号发起扫码会话",
-      "description": "请求体只接受 `ttlMinutes`（OneGl 端钳制在 [2,30] 分钟）。`accountId` 一律由服务端从调用者\n自己的绑定取得 —— **客户端提交的 accountId 必须被拒绝**：这是本批消灭的核心越权面，\n原先任何持 `geo:detect:execute` 的人都能对任意账号发起扫码并挤占其登录流程。\n调用者没有生效绑定时（首次、或解绑让位后），本调用按 `max(generation)+1` **新建一条绑定**再发起扫码，\n不返回 `GEO-42412`；第 1 代 `external_account_id` 保持 `geo_u{userId}` 原值（改即作废 OneGl 既有凭证），\n第 n≥2 代追加 `_g{n}` 后缀。\n",
-      "permission": "geo:collector:account:manage",
-      "idempotencyRule": null,
-      "parameters": [],
-      "requestBody": {
-        "required": false,
-        "contentType": "application/json",
-        "schema": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "ttlMinutes": {
-              "type": "integer",
-              "minimum": 2,
-              "maximum": 30,
-              "description": "省略时由 OneGl 取默认 10 分钟"
-            }
-          }
-        }
-      },
-      "hasJsonResponse": true
-    },
-    "get_onegl_auth_sessions_by_sessionid": {
-      "name": "get_onegl_auth_sessions_by_sessionid",
-      "method": "GET",
-      "path": "/onegl/auth-sessions/{sessionId}",
-      "tag": "detect",
-      "summary": "扫码会话状态",
-      "description": "状态机：`pending → starting → waiting_for_login → connected / verification_required /\naccess_restricted / failed / cancelled / expired`（OneGl 原值透传，不升格为 GEO 领域状态）。\n只能读取本人绑定发起的会话，否则 `GEO-42413`。\n",
-      "permission": "geo:collector:account:manage",
-      "idempotencyRule": null,
-      "parameters": [
-        {
-          "name": "sessionId",
-          "in": "path",
-          "required": true,
-          "description": "OneGl AuthSession id；GEO 侧按 geo_collector_auth_session 校验归属",
-          "schema": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 64
-          },
-          "style": "form",
-          "explode": true
-        }
-      ],
-      "requestBody": null,
-      "hasJsonResponse": true
-    },
-    "get_onegl_auth_sessions_by_sessionid_qr": {
-      "name": "get_onegl_auth_sessions_by_sessionid_qr",
-      "method": "GET",
-      "path": "/onegl/auth-sessions/{sessionId}/qr",
-      "tag": "detect",
-      "summary": "扫码登录二维码（PNG）",
-      "description": "只在 `waiting_for_login` 阶段可读，其它阶段 OneGl 返回 404 —— 属正常时序，前端须继续轮询\n状态而不是报错。二维码是**实时截图**，`waiting_for_login` 期间必须持续刷新，\n「拿到一张后不再取」会让用户扫到过期码。\n响应是二进制，不参与 GEO 的 `{code,msg,data}` 信封转换；出错时返回 JSON 信封，\n前端在 `responseType:'blob'` 下必须先把响应体按文本解回 JSON 才能取到 `msg`。\n",
-      "permission": "geo:collector:account:manage",
-      "idempotencyRule": null,
-      "parameters": [
-        {
-          "name": "sessionId",
-          "in": "path",
-          "required": true,
-          "description": "",
-          "schema": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 64
-          },
-          "style": "form",
-          "explode": true
-        }
-      ],
-      "requestBody": null,
-      "hasJsonResponse": false
-    },
-    "post_onegl_auth_sessions_by_sessionid_cancel": {
-      "name": "post_onegl_auth_sessions_by_sessionid_cancel",
-      "method": "POST",
-      "path": "/onegl/auth-sessions/{sessionId}/cancel",
-      "tag": "detect",
-      "summary": "取消本人发起的扫码会话",
-      "description": "",
-      "permission": "geo:collector:account:manage",
-      "idempotencyRule": null,
-      "parameters": [
-        {
-          "name": "sessionId",
-          "in": "path",
-          "required": true,
-          "description": "",
-          "schema": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 64
-          },
-          "style": "form",
-          "explode": true
-        }
-      ],
       "requestBody": null,
       "hasJsonResponse": true
     },
@@ -7474,70 +6555,6 @@
         "version"
       ]
     },
-    "ProjectCreate": {
-      "type": "object",
-      "description": "POST /projects 提交体（M01 新建，保存草稿）。字段对应 geo_project 列 + 竞品/预算桶初值；status 由服务端置 draft，不由客户端提交；industry 从 customer 派生不提交；客户端无 members 字段，服务端成功后自动建立创建者 active 成员关系，其他成员经 M14",
-      "properties": {
-        "name": {
-          "type": "string",
-          "description": "geo_project.name"
-        },
-        "customerId": {
-          "type": "string",
-          "description": "geo_project.customer_id；仅表达项目归属 Customer"
-        },
-        "goal": {
-          "type": "string",
-          "nullable": true,
-          "description": "草稿可空；启动必填（BR-PROJECT-001），可同时填写目标与验收要求"
-        },
-        "serviceStart": {
-          "type": "string",
-          "format": "date",
-          "nullable": true
-        },
-        "serviceEnd": {
-          "type": "string",
-          "format": "date",
-          "nullable": true
-        },
-        "ownerUserId": {
-          "type": "string",
-          "nullable": true,
-          "description": "ruoyi 用户；服务端校验 eligibility → GEO-40001"
-        },
-        "acceptanceNote": {
-          "type": "string",
-          "nullable": true,
-          "description": "历史兼容字段；M01 不单独提交"
-        },
-        "targetPlatforms": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          },
-          "description": "geo_platform.id 数组"
-        },
-        "competitors": {
-          "type": "array",
-          "items": {
-            "$ref": "#/components/schemas/ProjectCompetitorInput"
-          },
-          "description": "geo_project_competitor"
-        },
-        "budgetBuckets": {
-          "type": "array",
-          "items": {
-            "$ref": "#/components/schemas/BudgetBucketInput"
-          },
-          "description": "预算桶初值 geo_budget_bucket"
-        }
-      },
-      "required": [
-        "name",
-        "customerId"
-      ]
-    },
     "ProjectUpdate": {
       "type": "object",
       "description": "PUT /projects/{id} 提交体（S04 D 区档案表单）。仅 geo_project 可编辑列 + version；客户主体不在此变更（D-05）；状态迁移走 start/archive/restore 等专用动作；成员经 M14（BR-PROJECT-006）",
@@ -7584,26 +6601,6 @@
         "version"
       ]
     },
-    "ProjectTransferOwner": {
-      "type": "object",
-      "additionalProperties": false,
-      "description": "主运营移交请求体；新负责人须为本项目有效成员，老负责人保留为普通成员",
-      "properties": {
-        "version": {
-          "type": "integer",
-          "minimum": 0,
-          "description": "geo_project.version CAS"
-        },
-        "newOwnerUserId": {
-          "type": "string",
-          "description": "新主运营 ruoyi 用户 ID；须为本项目有效成员"
-        }
-      },
-      "required": [
-        "version",
-        "newOwnerUserId"
-      ]
-    },
     "BudgetBucketInput": {
       "type": "object",
       "description": "预算分类初值；bucketType 见 05 BudgetBucket（cash/detect/llm）；项目总预算由分类金额自动合计",
@@ -7621,30 +6618,6 @@
       "required": [
         "bucketType",
         "totalAmount"
-      ]
-    },
-    "CustomerCreate": {
-      "type": "object",
-      "description": "M01 客户主体基础资料；创建后作为 Project.customerId 的归属选项",
-      "properties": {
-        "name": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 200
-        },
-        "industry": {
-          "type": "string",
-          "nullable": true,
-          "maxLength": 100
-        },
-        "remark": {
-          "type": "string",
-          "nullable": true,
-          "maxLength": 500
-        }
-      },
-      "required": [
-        "name"
       ]
     },
     "EvidenceSourceCreate": {
@@ -8223,52 +7196,6 @@
           "minLength": 1,
           "maxLength": 500,
           "description": "状态动作原因；与 geo_fact_revision.disable_reason 的 500 字符存储上限一致"
-        }
-      },
-      "required": [
-        "version",
-        "reason"
-      ]
-    },
-    "ProjectFactReferenceCreate": {
-      "type": "object",
-      "additionalProperties": false,
-      "description": "只允许绑定当前项目所属 Customer 的 fact_scope=customer 修订。",
-      "properties": {
-        "factRevisionId": {
-          "type": "string",
-          "minLength": 1
-        },
-        "projectVersion": {
-          "type": "integer",
-          "minimum": 0,
-          "description": "当前 geo_project.version"
-        },
-        "reason": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 1000
-        }
-      },
-      "required": [
-        "factRevisionId",
-        "projectVersion",
-        "reason"
-      ]
-    },
-    "ProjectFactReferenceRevoke": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "version": {
-          "type": "integer",
-          "minimum": 0,
-          "description": "当前 ProjectFactReference.version"
-        },
-        "reason": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 1000
         }
       },
       "required": [
@@ -9179,94 +8106,6 @@
         "refId"
       ]
     },
-    "MemberInvite": {
-      "type": "object",
-      "properties": {
-        "userId": {
-          "type": "string",
-          "description": "复用 RuoYi 用户选择器的用户 ID"
-        },
-        "roleCode": {
-          "type": "string",
-          "description": "05 §17 Role"
-        },
-        "projectIds": {
-          "type": "array",
-          "minItems": 1,
-          "items": {
-            "type": "string"
-          },
-          "description": "邀请生效的项目范围；每个项目独立检查重复成员"
-        }
-      },
-      "required": [
-        "userId",
-        "roleCode",
-        "projectIds"
-      ]
-    },
-    "UserPreferenceUpdate": {
-      "type": "object",
-      "additionalProperties": false,
-      "description": "T-OPEN-20：项目上下文写入体",
-      "properties": {
-        "projectId": {
-          "type": "string",
-          "nullable": true,
-          "minLength": 1,
-          "description": "目标项目 ID；传 null 清除当前账号的项目上下文。写入前按当前账号可见性校验"
-        }
-      },
-      "required": [
-        "projectId"
-      ]
-    },
-    "MemberLifecycleAction": {
-      "type": "object",
-      "additionalProperties": false,
-      "description": "T-OPEN-09：projectId 必须与成员记录匹配；version 为 geo_project_membership.version CAS",
-      "properties": {
-        "projectId": {
-          "type": "string",
-          "minLength": 1
-        },
-        "version": {
-          "type": "integer",
-          "minimum": 0
-        }
-      },
-      "required": [
-        "projectId",
-        "version"
-      ]
-    },
-    "MemberPermissionUpdate": {
-      "type": "object",
-      "properties": {
-        "projectId": {
-          "type": "string",
-          "description": "必须与成员所属 membership.project_id 匹配"
-        },
-        "permissionCode": {
-          "type": "string",
-          "description": "07 权限码；未知码 GEO-40001"
-        },
-        "enabled": {
-          "type": "boolean"
-        },
-        "version": {
-          "type": "integer",
-          "minimum": 0,
-          "description": "CAS 版本；无授权行时为 0"
-        }
-      },
-      "required": [
-        "projectId",
-        "permissionCode",
-        "enabled",
-        "version"
-      ]
-    },
     "ArticleCardComposeRequest": {
       "type": "object",
       "additionalProperties": false,
@@ -9357,26 +8196,6 @@
       },
       "required": [
         "periods"
-      ]
-    },
-    "ProjectCompetitorInput": {
-      "type": "object",
-      "description": "geo_project_competitor 输入（BR-SCORE-001 竞品）",
-      "properties": {
-        "name": {
-          "type": "string"
-        },
-        "aliases": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          },
-          "nullable": true,
-          "description": "别名，BR-SCORE-001"
-        }
-      },
-      "required": [
-        "name"
       ]
     },
     "FactEvidenceReference": {
@@ -9615,154 +8434,262 @@
   },
   "excluded": [
     {
+      "method": "GET",
+      "path": "/workbench/summary",
+      "summary": "工作台聚合（S02）",
+      "reason": "该权限不在 07.projectApiTokens.allowedScopes 中"
+    },
+    {
+      "method": "GET",
+      "path": "/projects",
+      "summary": "项目列表（S03）",
+      "reason": "该端点在 07.projectApiTokens.excludedToolPaths 中排除"
+    },
+    {
+      "method": "POST",
+      "path": "/projects",
+      "summary": "创建项目（保存草稿）",
+      "reason": "该端点在 07.projectApiTokens.excludedToolPaths 中排除"
+    },
+    {
+      "method": "POST",
+      "path": "/projects/{projectId}/transfer-owner",
+      "summary": "移交项目主运营",
+      "reason": "该端点在 07.projectApiTokens.excludedToolPaths 中排除"
+    },
+    {
+      "method": "GET",
+      "path": "/projects/{projectId}/api-tokens",
+      "summary": "项目 API 令牌列表",
+      "reason": "该端点在 07.projectApiTokens.excludedToolPaths 中排除"
+    },
+    {
+      "method": "POST",
+      "path": "/projects/{projectId}/api-tokens",
+      "summary": "为项目创建 API 令牌",
+      "reason": "该端点在 07.projectApiTokens.excludedToolPaths 中排除"
+    },
+    {
+      "method": "DELETE",
+      "path": "/projects/{projectId}/api-tokens/{tokenId}",
+      "summary": "撤销项目 API 令牌",
+      "reason": "该端点在 07.projectApiTokens.excludedToolPaths 中排除"
+    },
+    {
+      "method": "GET",
+      "path": "/auth/project-token-context",
+      "summary": "校验项目 API 令牌上下文",
+      "reason": "该端点在 07.projectApiTokens.excludedToolPaths 中排除"
+    },
+    {
       "method": "POST",
       "path": "/projects/{projectId}/archive",
       "summary": "归档项目 ⚠ 高风险",
-      "reason": "项目归档不属于 GEO 运营 Agent 的日常项目操作"
+      "reason": "该权限不在 07.projectApiTokens.allowedScopes 中"
     },
     {
       "method": "POST",
       "path": "/projects/{projectId}/restore",
       "summary": "归档例外（恢复/补测/重发/外发）⚠ 高风险",
-      "reason": "恢复归档项目及其高风险例外操作不属于 GEO 运营 Agent 的范围"
+      "reason": "该权限不在 07.projectApiTokens.allowedScopes 中"
+    },
+    {
+      "method": "POST",
+      "path": "/customers",
+      "summary": "新增客户主体（M01 子弹窗）",
+      "reason": "该权限不在 07.projectApiTokens.allowedScopes 中"
+    },
+    {
+      "method": "GET",
+      "path": "/customers",
+      "summary": "客户选择器（M01）",
+      "reason": "该权限不在 07.projectApiTokens.allowedScopes 中"
     },
     {
       "method": "GET",
       "path": "/evidence-sources/{sourceId}/file",
       "summary": "读取资料原件（S05 Tab1 在线预览）",
-      "reason": "原始文件读取使用 GEO 页面"
+      "reason": "该路径段 file 在 07.projectApiTokens.excludedPathSegments 中排除"
+    },
+    {
+      "method": "GET",
+      "path": "/projects/{projectId}/fact-references",
+      "summary": "当前项目的客户事实引用",
+      "reason": "该权限不在 07.projectApiTokens.allowedScopes 中"
+    },
+    {
+      "method": "POST",
+      "path": "/projects/{projectId}/fact-references",
+      "summary": "绑定客户级事实修订",
+      "reason": "该权限不在 07.projectApiTokens.allowedScopes 中"
+    },
+    {
+      "method": "POST",
+      "path": "/projects/{projectId}/fact-references/{referenceId}/revoke",
+      "summary": "撤销客户级事实引用",
+      "reason": "该权限不在 07.projectApiTokens.allowedScopes 中"
     },
     {
       "method": "GET",
       "path": "/oss-images/admin",
       "summary": "管理员跨项目图库",
-      "reason": "跨项目管理员操作不暴露给 GEO 运营 Agent"
+      "reason": "该路径段 admin 在 07.projectApiTokens.excludedPathSegments 中排除"
     },
     {
       "method": "POST",
       "path": "/oss-images/admin/bind",
       "summary": "管理员绑定图片到指定项目图库",
-      "reason": "跨项目管理员操作不暴露给 GEO 运营 Agent"
+      "reason": "该路径段 admin 在 07.projectApiTokens.excludedPathSegments 中排除"
     },
     {
       "method": "GET",
       "path": "/oss-images/admin/{ossId}/references",
       "summary": "管理员图片引用反查",
-      "reason": "跨项目管理员操作不暴露给 GEO 运营 Agent"
+      "reason": "该路径段 admin 在 07.projectApiTokens.excludedPathSegments 中排除"
     },
     {
       "method": "POST",
       "path": "/oss-images/admin/{ossId}/rename",
       "summary": "管理员在指定项目图库重命名图片",
-      "reason": "跨项目管理员操作不暴露给 GEO 运营 Agent"
+      "reason": "该路径段 admin 在 07.projectApiTokens.excludedPathSegments 中排除"
     },
     {
       "method": "DELETE",
       "path": "/oss-images/admin/{ossId}",
       "summary": "管理员从指定项目图库解绑图片",
-      "reason": "跨项目管理员操作不暴露给 GEO 运营 Agent"
+      "reason": "该路径段 admin 在 07.projectApiTokens.excludedPathSegments 中排除"
     },
     {
       "method": "DELETE",
       "path": "/content-generation-tasks/{id}",
       "summary": "删除已停用内容生成任务",
-      "reason": "删除内容任务属于高风险治理操作"
+      "reason": "该权限不在 07.projectApiTokens.allowedScopes 中"
     },
     {
       "method": "POST",
       "path": "/publish-targets",
       "summary": "初始化发布目标（S12）",
-      "reason": "发布目标配置由 GEO 管理员维护"
+      "reason": "该权限不在 07.projectApiTokens.allowedScopes 中"
     },
     {
       "method": "PUT",
       "path": "/publish-targets/{id}",
       "summary": "编辑发布目标（S12）",
-      "reason": "发布目标配置由 GEO 管理员维护"
+      "reason": "该权限不在 07.projectApiTokens.allowedScopes 中"
     },
     {
       "method": "POST",
       "path": "/publish-targets/{id}/enable",
       "summary": "启用发布目标（S12）",
-      "reason": "发布目标配置由 GEO 管理员维护"
+      "reason": "该权限不在 07.projectApiTokens.allowedScopes 中"
     },
     {
       "method": "POST",
       "path": "/publish-targets/{id}/disable",
       "summary": "停用发布目标（S12）",
-      "reason": "发布目标配置由 GEO 管理员维护"
+      "reason": "该权限不在 07.projectApiTokens.allowedScopes 中"
     },
     {
       "method": "PUT",
       "path": "/publish-targets/{id}/provider-config",
       "summary": "保存发布目标资源映射（S12）",
-      "reason": "发布目标配置由 GEO 管理员维护"
+      "reason": "该权限不在 07.projectApiTokens.allowedScopes 中"
     },
     {
       "method": "GET",
       "path": "/media-catalog/admin/resources",
       "summary": "管理员媒体准入列表（完整目录＋准入状态）",
-      "reason": "跨项目管理员操作不暴露给 GEO 运营 Agent"
+      "reason": "该路径段 admin 在 07.projectApiTokens.excludedPathSegments 中排除"
     },
     {
       "method": "POST",
       "path": "/media-catalog/admin/resources/enable",
       "summary": "批量启用媒体（人工准入）",
-      "reason": "跨项目管理员操作不暴露给 GEO 运营 Agent"
+      "reason": "该路径段 admin 在 07.projectApiTokens.excludedPathSegments 中排除"
     },
     {
       "method": "POST",
       "path": "/media-catalog/admin/resources/disable",
       "summary": "批量停用媒体（撤销准入）",
-      "reason": "跨项目管理员操作不暴露给 GEO 运营 Agent"
+      "reason": "该路径段 admin 在 07.projectApiTokens.excludedPathSegments 中排除"
     },
     {
       "method": "POST",
       "path": "/media-catalog/admin/resources/resolve-ids",
       "summary": "按筛选解析媒体 ID（只读，供批量提交）",
-      "reason": "跨项目管理员操作不暴露给 GEO 运营 Agent"
+      "reason": "该路径段 admin 在 07.projectApiTokens.excludedPathSegments 中排除"
     },
     {
       "method": "POST",
       "path": "/media-catalog/admin/resources/locate-ids",
       "summary": "按 ID 预览可用媒体（只读，供导入）",
-      "reason": "跨项目管理员操作不暴露给 GEO 运营 Agent"
+      "reason": "该路径段 admin 在 07.projectApiTokens.excludedPathSegments 中排除"
+    },
+    {
+      "method": "POST",
+      "path": "/platform-accounts",
+      "summary": "绑定客户平台账号",
+      "reason": "该权限不在 07.projectApiTokens.allowedScopes 中"
+    },
+    {
+      "method": "PUT",
+      "path": "/platform-accounts",
+      "summary": "修改客户平台账号绑定",
+      "reason": "该权限不在 07.projectApiTokens.allowedScopes 中"
+    },
+    {
+      "method": "DELETE",
+      "path": "/platform-accounts",
+      "summary": "解除客户平台账号绑定",
+      "reason": "该权限不在 07.projectApiTokens.allowedScopes 中"
+    },
+    {
+      "method": "POST",
+      "path": "/platform-accounts/default",
+      "summary": "设为该平台默认账号",
+      "reason": "该权限不在 07.projectApiTokens.allowedScopes 中"
+    },
+    {
+      "method": "POST",
+      "path": "/platform-accounts/launch",
+      "summary": "签发打开客户平台账号的动作",
+      "reason": "该权限不在 07.projectApiTokens.allowedScopes 中"
     },
     {
       "method": "POST",
       "path": "/publish/callback/{providerCode}",
       "summary": "Provider 发布状态回调",
-      "reason": "Provider 回调只能由受信任 Provider 调用"
+      "reason": "该路径段 callback 在 07.projectApiTokens.excludedPathSegments 中排除"
     },
     {
       "method": "POST",
       "path": "/publish-records/{id}/withdraw",
       "summary": "撤回已发布记录 ⚠ 高风险",
-      "reason": "项目删除或已发布记录撤回属于高风险治理操作"
+      "reason": "该权限不在 07.projectApiTokens.allowedScopes 中"
     },
     {
       "method": "GET",
       "path": "/report-revisions/{id}/send-external",
       "summary": "客户版脱敏预览 ⚠",
-      "reason": "客户外发不属于内部 GEO 运营工具"
+      "reason": "该路径段 send-external 在 07.projectApiTokens.excludedPathSegments 中排除"
     },
     {
       "method": "POST",
       "path": "/report-revisions/{id}/send-external",
       "summary": "外发客户版 ⚠ 高风险",
-      "reason": "客户外发不属于内部 GEO 运营工具"
+      "reason": "该路径段 send-external 在 07.projectApiTokens.excludedPathSegments 中排除"
     },
     {
       "method": "GET",
       "path": "/budget/pool",
       "summary": "当前租户管理端资金池",
-      "reason": "租户资金池与预算放行超出 GEO 项目运营范围"
+      "reason": "该权限不在 07.projectApiTokens.allowedScopes 中"
     },
     {
       "method": "POST",
       "path": "/budget/pool/initialize",
       "summary": "初始化当前租户资金池",
-      "reason": "租户资金池与预算放行超出 GEO 项目运营范围"
+      "reason": "该权限不在 07.projectApiTokens.allowedScopes 中"
     },
     {
       "method": "POST",
@@ -9772,33 +8699,129 @@
     },
     {
       "method": "GET",
+      "path": "/members/my-permissions",
+      "summary": "当前用户在项目中的有效权限",
+      "reason": "该端点在 07.projectApiTokens.excludedToolPaths 中排除"
+    },
+    {
+      "method": "GET",
+      "path": "/members",
+      "summary": "成员与权限矩阵（S12 Tab1）",
+      "reason": "该端点在 07.projectApiTokens.excludedToolPaths 中排除"
+    },
+    {
+      "method": "POST",
+      "path": "/members",
+      "summary": "邀请成员（M14）",
+      "reason": "该端点在 07.projectApiTokens.excludedToolPaths 中排除"
+    },
+    {
+      "method": "GET",
+      "path": "/members/invitations",
+      "summary": "当前账号的待处理项目邀请",
+      "reason": "该端点在 07.projectApiTokens.excludedToolPaths 中排除"
+    },
+    {
+      "method": "GET",
+      "path": "/user-preferences",
+      "summary": "当前账号的用户级偏好",
+      "reason": "该端点在 07.projectApiTokens.excludedToolPaths 中排除"
+    },
+    {
+      "method": "PUT",
+      "path": "/user-preferences/active-project",
+      "summary": "保存当前账号的项目上下文",
+      "reason": "该端点在 07.projectApiTokens.excludedToolPaths 中排除"
+    },
+    {
+      "method": "POST",
+      "path": "/members/{id}/accept",
+      "summary": "接受成员邀请",
+      "reason": "该端点在 07.projectApiTokens.excludedToolPaths 中排除"
+    },
+    {
+      "method": "POST",
+      "path": "/members/{id}/revoke-invite",
+      "summary": "撤销或拒绝成员邀请",
+      "reason": "缺少 x-permission，项目绑定令牌不向通用工具开放"
+    },
+    {
+      "method": "POST",
+      "path": "/members/{id}/remove",
+      "summary": "移除活跃成员",
+      "reason": "缺少 x-permission，项目绑定令牌不向通用工具开放"
+    },
+    {
+      "method": "PUT",
+      "path": "/members/{id}/permissions",
+      "summary": "修改成员动作权限",
+      "reason": "该端点在 07.projectApiTokens.excludedToolPaths 中排除"
+    },
+    {
+      "method": "GET",
       "path": "/audit-events",
       "summary": "审计查询（S14）",
-      "reason": "管理端审计读取不暴露给 GEO 运营 Agent"
+      "reason": "该权限不在 07.projectApiTokens.allowedScopes 中"
     },
     {
       "method": "GET",
       "path": "/audit-runs",
       "summary": "Audit Run 草案列表",
-      "reason": "管理端审计读取不暴露给 GEO 运营 Agent"
+      "reason": "该权限不在 07.projectApiTokens.allowedScopes 中"
     },
     {
       "method": "GET",
       "path": "/audit-runs/{id}",
       "summary": "Audit Run 草案详情",
-      "reason": "管理端审计读取不暴露给 GEO 运营 Agent"
+      "reason": "该权限不在 07.projectApiTokens.allowedScopes 中"
+    },
+    {
+      "method": "GET",
+      "path": "/onegl/accounts",
+      "summary": "我可见的豆包采集账号",
+      "reason": "该权限不在 07.projectApiTokens.allowedScopes 中"
+    },
+    {
+      "method": "DELETE",
+      "path": "/onegl/accounts/{accountId}",
+      "summary": "解绑本人的豆包采集账号",
+      "reason": "该权限不在 07.projectApiTokens.allowedScopes 中"
     },
     {
       "method": "GET",
       "path": "/collector-accounts",
       "summary": "全租户采集账号绑定明细（治理视图）",
-      "reason": "全租户采集账号明细超出 GEO 运营 Agent 的项目范围"
+      "reason": "该端点在 07.projectApiTokens.excludedToolPaths 中排除"
+    },
+    {
+      "method": "POST",
+      "path": "/onegl/auth-sessions",
+      "summary": "为本人绑定的采集账号发起扫码会话",
+      "reason": "该权限不在 07.projectApiTokens.allowedScopes 中"
+    },
+    {
+      "method": "GET",
+      "path": "/onegl/auth-sessions/{sessionId}",
+      "summary": "扫码会话状态",
+      "reason": "该权限不在 07.projectApiTokens.allowedScopes 中"
+    },
+    {
+      "method": "GET",
+      "path": "/onegl/auth-sessions/{sessionId}/qr",
+      "summary": "扫码登录二维码（PNG）",
+      "reason": "该权限不在 07.projectApiTokens.allowedScopes 中"
+    },
+    {
+      "method": "POST",
+      "path": "/onegl/auth-sessions/{sessionId}/cancel",
+      "summary": "取消本人发起的扫码会话",
+      "reason": "该权限不在 07.projectApiTokens.allowedScopes 中"
     },
     {
       "method": "GET",
       "path": "/audit-events/export",
       "summary": "导出审计",
-      "reason": "管理端审计导出不暴露给 GEO 运营 Agent"
+      "reason": "该权限不在 07.projectApiTokens.allowedScopes 中"
     }
   ]
 }

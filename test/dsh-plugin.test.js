@@ -24,7 +24,7 @@ test('every write asks the operator; reads pass without an approval prompt', asy
   assert.doesNotMatch(post.displayReason.zh_CN, /do-not-show-entire-article/);
 
   let delegated = 0;
-  const get = await geoApprovalDecision({ name: 'geo_api', arguments: { operation: 'get_projects' } }, async () => { delegated += 1; return { kind: 'allow' }; });
+  const get = await geoApprovalDecision({ name: 'geo_api', arguments: { operation: 'get_projects_by_projectid' } }, async () => { delegated += 1; return { kind: 'allow' }; });
   assert.equal(get.kind, 'allow');
   assert.equal(delegated, 1);
 });
@@ -38,7 +38,7 @@ test('tenant-wide collector-account reads are excluded from DSH operations', asy
   assert.equal(catalog.operations.get_collector_accounts, undefined);
   assert.ok(catalog.excluded.some((operation) =>
     operation.path === '/collector-accounts'
-      && operation.reason.includes('超出 GEO 运营 Agent 的项目范围')));
+      && operation.reason.includes('07.projectApiTokens.excludedToolPaths')));
 
   const decision = await geoApprovalDecision({
     name: 'geo_api',
@@ -91,7 +91,18 @@ test('plugin registers the generated API surface and restricts each agent to GEO
     },
     on(name, handler) { events.set(name, handler); },
   };
-  apply(ctx, { apiBaseUrl: 'https://geo.example' });
+  const warnings = [];
+  const originalWarn = console.warn;
+  console.warn = (...args) => { warnings.push(args.join(' ')); };
+  try {
+    apply(ctx, { apiBaseUrl: 'https://geo.example' });
+  } finally {
+    console.warn = originalWarn;
+  }
+  // The isolating configuration must announce itself instead of silently masking tools.
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /tool isolation is active/);
+  assert.match(warnings[0], /restrictTools/);
   assert.deepEqual(registered.map(tool => tool.name), ['geo_api', 'geo_describe_operation', 'geo_list_evidence_files', 'geo_upload_evidence', 'geo_connection_status']);
   const expectedRestriction = { allow: ['geo_api', 'geo_describe_operation', 'geo_list_evidence_files', 'geo_upload_evidence', 'geo_connection_status'] };
   assert.deepEqual(existing.state.restriction, expectedRestriction);
@@ -113,35 +124,78 @@ test('plugin registers the generated API surface and restricts each agent to GEO
   assert.equal(api.execute.length, 2);
 });
 
-test('geo_api chooses a project-specific bearer and never sends the selector as an extra GEO field', async () => {
+test('restrictTools false keeps the GEO tools but never restricts an agent', () => {
+  const registered = [];
+  const events = new Map();
+  const state = { restriction: undefined };
+  const makeAgent = () => ({
+    ctx: {
+      tools: {
+        restrict(filter) {
+          state.restriction = filter;
+          return () => { state.restriction = undefined; };
+        },
+      },
+      effect(callback) {
+        const dispose = callback();
+        return () => { if (typeof dispose === 'function') dispose(); };
+      },
+    },
+  });
+  const existing = makeAgent();
+  const ctx = {
+    tools: { register(tool) { registered.push(tool); } },
+    credentials: { async describe() { return { configured: true, writable: true }; } },
+    agents: { list() { return [existing]; } },
+    effect(callback) {
+      const dispose = callback();
+      return () => { if (typeof dispose === 'function') dispose(); };
+    },
+    on(name, handler) { events.set(name, handler); },
+  };
+  const warnings = [];
+  const originalWarn = console.warn;
+  console.warn = (...args) => { warnings.push(args.join(' ')); };
+  try {
+    apply(ctx, { apiBaseUrl: 'https://geo.example', restrictTools: false });
+  } finally {
+    console.warn = originalWarn;
+  }
+  // No isolation means no isolation notice.
+  assert.equal(warnings.length, 0);
+  // The tool surface is identical to the isolating configuration …
+  assert.deepEqual(registered.map(tool => tool.name), ['geo_api', 'geo_describe_operation', 'geo_list_evidence_files', 'geo_upload_evidence', 'geo_connection_status']);
+  // … but nothing is masked, for the existing agent or any later one.
+  assert.equal(state.restriction, undefined);
+  events.get('agent/created')({ agent: makeAgent() });
+  assert.equal(state.restriction, undefined);
+  events.get('agent/disposed')({ agent: existing });
+  assert.equal(state.restriction, undefined);
+});
+
+test('geo_api sends the selected project bearer directly and never sends the selector as an extra GEO field', async () => {
   const registered = [];
   const values = new Map();
-  for (const [projectId, clientId, secret] of [
-    ['101', 'geo-client-101', '101-secret-0123456789abcdef0123456789'],
-    ['202', 'geo-client-202', '202-secret-0123456789abcdef0123456789'],
+  for (const [projectId, token] of [
+    ['101', `geop_${'first-project-token'.padEnd(43, 'a').slice(0, 43)}`],
+    ['202', `geop_${'second-project-token'.padEnd(43, 'b').slice(0, 43)}`],
   ]) {
     const refs = projectCredentialRefs(projectId);
-    values.set(refs.clientId, clientId);
-    values.set(refs.clientSecret, secret);
+    values.set(refs.apiToken, token);
   }
   const requests = [];
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (input, init = {}) => {
     const url = new URL(input);
     requests.push({ url, init });
-    if (url.pathname === '/auth/machine-token') {
-      const body = JSON.parse(init.body);
-      return new Response(JSON.stringify({
-        code: 200,
-        data: { access_token: `bearer-${body.client_id}`, token_type: 'Bearer', expires_in: 1200, client_id: body.client_id },
-      }), { status: 200, headers: { 'content-type': 'application/json' } });
-    }
     return new Response(JSON.stringify({ code: 200, msg: 'OK', data: [] }), {
       status: 200,
       headers: { 'content-type': 'application/json' },
     });
   };
 
+  const originalWarn = console.warn;
+  console.warn = () => {};
   try {
     const ctx = {
       tools: { register(tool) { registered.push(tool); } },
@@ -159,17 +213,20 @@ test('geo_api chooses a project-specific bearer and never sends the selector as 
     });
     const api = registered.find(tool => tool.name === 'geo_api');
     for (const projectId of ['101', '202']) {
-      const result = await api.execute({ operation: 'get_projects', projectId }, { signal: undefined });
+      const result = await api.execute({
+        operation: 'get_projects_by_projectid',
+        projectId,
+        pathParams: { projectId },
+      }, { signal: undefined });
       assert.equal(result.ok, true);
     }
 
-    const authRequests = requests.filter(request => request.url.pathname === '/auth/machine-token');
-    const businessRequests = requests.filter(request => request.url.pathname === '/geo/projects');
-    assert.deepEqual(authRequests.map(request => JSON.parse(request.init.body).client_id), ['geo-client-101', 'geo-client-202']);
+    const businessRequests = requests.filter(request => request.url.pathname.startsWith('/geo/projects/'));
     assert.deepEqual(businessRequests.map(request => request.init.headers.get('authorization')), [
-      'Bearer bearer-geo-client-101',
-      'Bearer bearer-geo-client-202',
+      `Bearer ${values.get(projectCredentialRefs('101').apiToken)}`,
+      `Bearer ${values.get(projectCredentialRefs('202').apiToken)}`,
     ]);
+    assert.deepEqual(businessRequests.map(request => request.url.pathname), ['/geo/projects/101', '/geo/projects/202']);
     assert.deepEqual(businessRequests.map(request => request.url.search), ['', '']);
 
     const mismatch = await api.execute({
@@ -179,8 +236,9 @@ test('geo_api chooses a project-specific bearer and never sends the selector as 
     }, { signal: undefined });
     assert.equal(mismatch.ok, false);
     assert.match(mismatch.error, /does not match/);
-    assert.equal(requests.length, 4);
+    assert.equal(requests.length, 2);
   } finally {
     globalThis.fetch = originalFetch;
+    console.warn = originalWarn;
   }
 });

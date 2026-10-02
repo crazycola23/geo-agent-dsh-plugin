@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import { defineTool } from '@deepseek-ai/dsh-tools';
-import { createGeoAuthProvider, executeWithGeoMachineToken } from './auth-provider.js';
+import { createGeoAuthProvider, executeWithGeoProjectToken } from './auth-provider.js';
 import { executeGeoOperation, executeGeoEvidenceUpload, listStagedEvidenceFiles, describeOperation, isWriteOperation } from './api-client.js';
 import { Config, pluginSettings } from './config.js';
 import { resolveProjectSelection } from './project-context.js';
@@ -19,7 +19,7 @@ function safeApprovalValue(value, fallback) {
 }
 
 function summarizeApprovalValue(value, key = '', depth = 0) {
-  if (key && /^(?:accessToken|refreshToken|apiKey|authorization|password|secret|cookie|file|content|html|markdown|text|prompt|payload|base64)$/i.test(key)) {
+  if (key && /^(?:accessToken|refreshToken|apiKey|token|authorization|password|secret|cookie|file|content|html|markdown|text|prompt|payload|base64)$/i.test(key)) {
     return '[内容已省略；请查看上方已确认的业务信息]';
   }
   if (typeof value === 'string') return value.replace(/[\u0000-\u001f\u007f\u2028\u2029]/g, ' ').slice(0, 120);
@@ -87,14 +87,19 @@ export function apply(ctx, config = {}) {
   }
 
   const currentSettings = () => pluginSettings(config);
-  const auth = createGeoAuthProvider({ credentials: ctx.credentials, getSettings: currentSettings });
+  const auth = createGeoAuthProvider({
+    credentials: ctx.credentials,
+    tokenPrefix: catalog.projectApiTokenPolicy.tokenPrefix,
+    serverPath: catalog.serverPath,
+    getSettings: currentSettings,
+  });
 
   ctx.tools.register(defineTool({
     name: 'geo_api',
-    description: 'Call one fixed GEO API operation from the generated OpenAPI allowlist. projectId selects that project’s dedicated machine credentials and Bearer token; if the operation also carries projectId in path/query/body, it must match. Use geo_describe_operation first when you need exact request fields. Every non-GET request is shown to the operator for DSH approval before dispatch. Never repeat a call with unknown outcome until the matching GEO object or order has been checked.',
+    description: 'Call one fixed GEO API operation from the generated OpenAPI allowlist. projectId selects that project’s directly configured GEO project API token; if the operation also carries projectId in path/query/body, it must match. Use geo_describe_operation first when you need exact request fields. Every non-GET request is shown to the operator for DSH approval before dispatch. Never repeat a call with unknown outcome until the matching GEO object or order has been checked.',
     parameters: {
       operation: { type: 'string', enum: operationNames, required: true, description: 'Exact operation name from the generated GEO OpenAPI catalog.' },
-      projectId: { type: 'string', required: true, description: 'GEO project whose configured machine client supplies the Bearer token. Match any projectId included in the operation request. This selector is not sent as an extra GEO field.' },
+      projectId: { type: 'string', required: true, description: 'GEO project whose project API token is stored in DSH Credentials. Match any projectId included in the operation request. This selector is not sent as an extra GEO field.' },
       pathParams: { type: 'json', description: 'JSON object containing only the path parameters declared by this operation.' },
       query: { type: 'json', description: 'JSON object containing only query parameters declared by this operation.' },
       body: { type: 'json', description: 'Application/json request body matching the current canonical GEO OpenAPI schema.' },
@@ -106,7 +111,7 @@ export function apply(ctx, config = {}) {
       const selection = resolveProjectSelection(args.projectId, args);
       if (!selection.ok) return { ok: false, outcome: 'rejected', error: selection.error };
       const { projectId: _authProjectId, ...requestArgs } = args;
-      return executeWithGeoMachineToken(auth, selection.projectId, token => executeGeoOperation({ catalog, operationName: args.operation, args: requestArgs, baseUrl: settings.baseUrl, token, signal: exec.signal, timeoutMs: settings.timeoutMs }), settings);
+      return executeWithGeoProjectToken(auth, selection.projectId, token => executeGeoOperation({ catalog, operationName: args.operation, args: requestArgs, baseUrl: settings.baseUrl, token, signal: exec.signal, timeoutMs: settings.timeoutMs }), settings);
     },
   }));
 
@@ -148,15 +153,15 @@ export function apply(ctx, config = {}) {
     output: jsonOutput(),
     async execute(args, exec) {
       const settings = currentSettings();
-      return executeWithGeoMachineToken(auth, args.projectId, token => executeGeoEvidenceUpload({ catalog, args, evidenceDirectory: settings.evidenceDirectory, baseUrl: settings.baseUrl, token, signal: exec.signal, timeoutMs: settings.timeoutMs }), settings);
+      return executeWithGeoProjectToken(auth, args.projectId, token => executeGeoEvidenceUpload({ catalog, args, evidenceDirectory: settings.evidenceDirectory, baseUrl: settings.baseUrl, token, signal: exec.signal, timeoutMs: settings.timeoutMs }), settings);
     },
   }));
 
   ctx.tools.register(defineTool({
     name: 'geo_connection_status',
-    description: 'Authenticate one configured GEO project machine client and report its bound service account and token expiry without displaying or returning the access token.',
+    description: 'Validate one configured GEO project API token against GEO, and report the bound project, token name, scopes, and expiry without displaying the bearer.',
     parameters: {
-      projectId: { type: 'string', required: true, description: 'Configured GEO project whose machine client should be tested.' },
+      projectId: { type: 'string', required: true, description: 'Configured GEO project whose project API token should be tested.' },
     },
     output: jsonOutput(),
     async execute({ projectId }) {
@@ -166,10 +171,11 @@ export function apply(ctx, config = {}) {
         projectId: authStatus.projectId,
         projectConfigured: authStatus.projectConfigured,
         baseUrlConfigured: typeof settings.baseUrl === 'string' && settings.baseUrl.length > 0,
-        machineCredentialsConfigured: authStatus.configured,
+        projectTokenConfigured: authStatus.configured,
         authenticated: authStatus.authenticated,
-        clientId: authStatus.clientId,
-        principal: authStatus.principal,
+        projectName: authStatus.projectName,
+        tokenName: authStatus.tokenName,
+        scopes: authStatus.scopes,
         expiresAt: authStatus.expiresAt,
         error: authStatus.error,
         evidenceDirectoryConfigured: typeof settings.evidenceDirectory === 'string' && settings.evidenceDirectory.length > 0,
@@ -182,23 +188,48 @@ export function apply(ctx, config = {}) {
 
   ctx.on('tools/pre-execute', (execution, next) => geoApprovalDecision(execution, next, catalog));
 
-  // Restrict each current and future agent in its own scope. A global restriction
-  // would also mask tools for unrelated agents in a shared DSH runtime.
+  // Tool-level isolation. Restrict each current and future agent in its own scope
+  // — a global restriction would also mask tools for unrelated agents in a shared
+  // DSH runtime. Because every agent of this runtime is restricted, the behaviour
+  // is correct only inside a dedicated GEO-only DSH home; a shared profile would
+  // lose every unrelated tool. restrictTools (default true) is the switch, and the
+  // condition is announced on startup so a shared-profile install is never silent.
   const restrictions = new Map();
+  const restrictToolsEnabled = () => currentSettings().restrictTools !== false;
+  /** Drop one agent's restriction, if any. Safe to call repeatedly. */
+  const releaseAgent = (agent) => {
+    const dispose = restrictions.get(agent);
+    if (dispose === undefined) return;
+    restrictions.delete(agent);
+    void dispose();
+  };
   const restrictAgent = (agent) => {
+    // Turning the switch off must release agents that are ALREADY restricted, not just
+    // stop restricting new ones — otherwise "off" would not actually restore the tools.
+    if (!restrictToolsEnabled()) {
+      releaseAgent(agent);
+      return;
+    }
     if (restrictions.has(agent)) return;
     if (typeof agent?.ctx?.tools?.restrict !== 'function' || typeof agent.ctx.effect !== 'function') {
       throw new Error('GEO DSH plugin requires agent-scoped tool restrictions');
     }
     restrictions.set(agent, ctx.effect(() => agent.ctx.effect(() => agent.ctx.tools.restrict({ allow: toolNames }))));
   };
+  /** Reconcile the whole agent set so a settings-card toggle converges without a restart. */
+  const reconcileAgents = () => {
+    for (const agent of ctx.agents.list()) restrictAgent(agent);
+  };
 
-  for (const agent of ctx.agents.list()) restrictAgent(agent);
-  ctx.on('agent/created', ({ agent }) => restrictAgent(agent));
-  ctx.on('agent/disposed', ({ agent }) => {
-    const dispose = restrictions.get(agent);
-    if (dispose === undefined) return;
-    restrictions.delete(agent);
-    void dispose();
+  reconcileAgents();
+  ctx.on('agent/created', ({ agent }) => {
+    restrictAgent(agent);
+    reconcileAgents();
   });
+  ctx.on('agent/disposed', ({ agent }) => releaseAgent(agent));
+
+  if (restrictToolsEnabled()) {
+    console.warn(`[geo-agent-dsh-plugin] GEO tool isolation is active: every agent in this DSH runtime sees only the ${toolNames.length} GEO tools (${toolNames.join(', ')}). `
+      + 'This is by design in a dedicated GEO DSH home. To keep the GEO tools but stop masking other tools, set config.restrictTools to false on the geo-agent-dsh-plugin row of that profile\'s cordis.patch.yml.');
+  }
 }

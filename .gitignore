@@ -1,7 +1,15 @@
 node_modules/
-lib/
 .env
 .env.*
 !.env.example
 .credentials.yaml
 *.log
+
+# 构建产物要随仓库一起发。
+# 官方模板（cordis-plugin-development/templates/decoration）就是把 client.js 当普通文件随包分发的，
+# 所以 lib/ 不能忽略 —— 否则别人克隆下来会缺客户端半体，服务端工具和设置卡片都少一半。
+#
+# 但本地备份绝不进仓库。
+lib/*.bak*
+*.bak.*
+package.json.bak*

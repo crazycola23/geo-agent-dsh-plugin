@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="GEO">
+  <title>GEO 工作台</title>
+  <rect x="1" y="1" width="30" height="30" rx="8" fill="#2563eb"/>
+  <rect x="8" y="17" width="4" height="7" rx="1.4" fill="#ffffff" opacity="0.62"/>
+  <rect x="14" y="12" width="4" height="12" rx="1.4" fill="#ffffff" opacity="0.82"/>
+  <rect x="20" y="7" width="4" height="17" rx="1.4" fill="#ffffff"/>
+</svg>

@@ -11,8 +11,8 @@ type CredentialRemote = {
   unset(ref: string): Promise<RemoteResult>
 }
 type ProjectSettings = { projectId: string; name?: string }
-type ProjectDraft = ProjectSettings & { draftKey: string; clientId: string; clientSecret: string; persisted: boolean }
-type SettingsValue = { apiBaseUrl?: string; evidenceDirectory?: string; timeoutMs?: number; projects?: ProjectSettings[] }
+type ProjectDraft = ProjectSettings & { draftKey: string; apiToken: string; persisted: boolean }
+type SettingsValue = { apiBaseUrl?: string; evidenceDirectory?: string; timeoutMs?: number; projects?: ProjectSettings[]; restrictTools?: boolean }
 type ScopeSnapshot = { value?: SettingsValue; writable?: boolean }
 type FormScope = {
   getSnapshot(): ScopeSnapshot
@@ -35,7 +35,7 @@ function normalizeOrigin(input: string): string {
     throw new Error('请填写服务协议、IP/域名和端口，不要填写路径、用户名或查询参数。')
   }
   if (url.protocol !== 'https:' && !['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)) {
-    throw new Error('机器认证要求 HTTPS；内网 IP 也需要配置 HTTPS。')
+    throw new Error('GEO 项目令牌要求 HTTPS；内网 IP 也需要配置 HTTPS。')
   }
   return url.origin
 }
@@ -44,13 +44,8 @@ function validProjectId(value: string): boolean {
   return /^[1-9]\d{0,19}$/.test(value.trim())
 }
 
-function credentialRefs(projectId: string): { clientId: string; clientSecret: string } {
-  const prefix = `GEO_PROJECT_${projectId}`
-  return { clientId: `${prefix}_CLIENT_ID`, clientSecret: `${prefix}_CLIENT_SECRET` }
-}
-
-function validateMachineSecret(value: string): boolean {
-  return /^[!-~]{32,72}$/.test(value)
+function credentialRefs(projectId: string): { apiToken: string } {
+  return { apiToken: `GEO_PROJECT_${projectId}_API_TOKEN` }
 }
 
 function errorMessage(error: unknown): string {
@@ -62,8 +57,7 @@ function draftsFrom(projects: ProjectSettings[] | undefined): ProjectDraft[] {
     draftKey: `saved-${project.projectId}-${index}`,
     projectId: project.projectId,
     name: project.name ?? '',
-    clientId: '',
-    clientSecret: '',
+    apiToken: '',
     persisted: true,
   }))
 }
@@ -111,12 +105,12 @@ async function describeCredentials(credentials: CredentialRemote, refs: string[]
 
 async function writeCredential(credentials: CredentialRemote, ref: string, value: string): Promise<void> {
   const result = await credentials.set(ref, value)
-  if (!result.ok) throw new Error(result.error?.message || 'DSH 拒绝保存机器凭据。')
+  if (!result.ok) throw new Error(result.error?.message || 'DSH 拒绝保存项目令牌。')
 }
 
 async function removeCredential(credentials: CredentialRemote, ref: string): Promise<void> {
   const result = await credentials.unset(ref)
-  if (!result.ok) throw new Error(result.error?.message || 'DSH 拒绝删除机器凭据。')
+  if (!result.ok) throw new Error(result.error?.message || 'DSH 拒绝删除项目令牌。')
 }
 
 function CredentialState(props: { label: string; info?: CredentialInfo }): ReactNode {
@@ -146,6 +140,8 @@ export function GeoSettingsCard(props: GeoSettingsCardProps): ReactNode {
   const [failure, setFailure] = useState<string | undefined>()
   const [removedProjectIds, setRemovedProjectIds] = useState<string[]>([])
   const [confirmRemoveKey, setConfirmRemoveKey] = useState<string | undefined>()
+  const [isolationBusy, setIsolationBusy] = useState(false)
+  const [isolationError, setIsolationError] = useState<string | undefined>()
   const nextDraftId = useRef(0)
 
   useEffect(() => {
@@ -187,7 +183,7 @@ export function GeoSettingsCard(props: GeoSettingsCardProps): ReactNode {
   const configuredProjectCount = projects.filter(project => {
     if (!validProjectId(project.projectId)) return false
     const refs = credentialRefs(project.projectId.trim())
-    return credentialState[refs.clientId]?.configured === true && credentialState[refs.clientSecret]?.configured === true
+    return credentialState[refs.apiToken]?.configured === true
   }).length
   const endpointReady = apiBaseUrl.trim().length > 0
   const statusCopy = endpointReady && configuredProjectCount > 0 ? `待验证 · ${configuredProjectCount} 个项目` : '待配置'
@@ -198,7 +194,7 @@ export function GeoSettingsCard(props: GeoSettingsCardProps): ReactNode {
     setFailure(undefined)
   }
 
-  const updateProject = (draftKey: string, field: keyof Pick<ProjectDraft, 'projectId' | 'name' | 'clientId' | 'clientSecret'>, nextValue: string): void => {
+  const updateProject = (draftKey: string, field: keyof Pick<ProjectDraft, 'projectId' | 'name' | 'apiToken'>, nextValue: string): void => {
     markDirty()
     setProjects(current => current.map(project => project.draftKey === draftKey ? { ...project, [field]: nextValue } : project))
   }
@@ -210,8 +206,7 @@ export function GeoSettingsCard(props: GeoSettingsCardProps): ReactNode {
       draftKey: `new-${nextDraftId.current}`,
       projectId: '',
       name: '',
-      clientId: '',
-      clientSecret: '',
+      apiToken: '',
       persisted: false,
     }])
   }
@@ -228,7 +223,7 @@ export function GeoSettingsCard(props: GeoSettingsCardProps): ReactNode {
 
   const save = async (): Promise<void> => {
     if (!credentials) {
-      setFailure('当前 DSH 没有提供凭据设置接口，无法安全保存项目凭据。')
+      setFailure('当前 DSH 没有提供凭据设置接口，无法安全保存项目令牌。')
       return
     }
     let origin: string
@@ -247,7 +242,6 @@ export function GeoSettingsCard(props: GeoSettingsCardProps): ReactNode {
 
     const normalizedProjects: ProjectSettings[] = []
     const seenProjectIds = new Set<string>()
-    const seenClientIds = new Map<string, string>()
     const credentialWrites: Array<{ ref: string; value: string }> = []
     for (const project of projects) {
       const projectId = project.projectId.trim()
@@ -256,7 +250,7 @@ export function GeoSettingsCard(props: GeoSettingsCardProps): ReactNode {
         return
       }
       if (seenProjectIds.has(projectId)) {
-        setFailure(`项目 ID ${projectId} 重复了；每个项目只能配置一组机器凭据。`)
+        setFailure(`项目 ID ${projectId} 重复了；每个项目只能配置一个令牌。`)
         return
       }
       seenProjectIds.add(projectId)
@@ -266,44 +260,17 @@ export function GeoSettingsCard(props: GeoSettingsCardProps): ReactNode {
       }
 
       const refs = credentialRefs(projectId)
-      const clientId = project.clientId.trim()
-      const clientSecret = project.clientSecret
-      const clientIdConfigured = credentialState[refs.clientId]?.configured === true
-      const secretConfigured = credentialState[refs.clientSecret]?.configured === true
-      if (clientId && clientId.length > 64) {
-        setFailure(`项目 ${projectId} 的 Client ID 不能超过 64 个字符。`)
+      const apiToken = project.apiToken.trim()
+      const tokenConfigured = credentialState[refs.apiToken]?.configured === true
+      if (!apiToken && !tokenConfigured) {
+        setFailure(`请粘贴为项目 ${projectId} 创建的项目 API 令牌。`)
         return
       }
-      if (clientId) {
-        const otherProjectId = seenClientIds.get(clientId)
-        if (otherProjectId) {
-          setFailure(`项目 ${projectId} 与项目 ${otherProjectId} 使用了相同 Client ID；每个项目必须配置独立机器客户端。`)
-          return
-        }
-        seenClientIds.set(clientId, projectId)
-      }
-      if (clientSecret && !validateMachineSecret(clientSecret)) {
-        setFailure(`项目 ${projectId} 的 Client Secret 需要 32–72 位可打印 ASCII 字符，不能包含空格。`)
+      if (apiToken && credentialState[refs.apiToken]?.writable === false) {
+        setFailure(`项目 ${projectId} 的令牌由外部管理，无法在此覆盖。`)
         return
       }
-      if (!clientId && !clientIdConfigured) {
-        setFailure(`请填写项目 ${projectId} 的 Client ID。`)
-        return
-      }
-      if (!clientSecret && !secretConfigured) {
-        setFailure(`请填写项目 ${projectId} 的 Client Secret。`)
-        return
-      }
-      if (clientId && credentialState[refs.clientId]?.writable === false) {
-        setFailure(`项目 ${projectId} 的 Client ID 由外部管理，无法在此覆盖。`)
-        return
-      }
-      if (clientSecret && credentialState[refs.clientSecret]?.writable === false) {
-        setFailure(`项目 ${projectId} 的 Client Secret 由外部管理，无法在此覆盖。`)
-        return
-      }
-      if (clientId) credentialWrites.push({ ref: refs.clientId, value: clientId })
-      if (clientSecret) credentialWrites.push({ ref: refs.clientSecret, value: clientSecret })
+      if (apiToken) credentialWrites.push({ ref: refs.apiToken, value: apiToken })
       normalizedProjects.push({ projectId, name: project.name.trim() })
     }
 
@@ -340,8 +307,7 @@ export function GeoSettingsCard(props: GeoSettingsCardProps): ReactNode {
       setProjects(normalizedProjects.map((project, index) => ({
         ...project,
         draftKey: `saved-${project.projectId}-${index}`,
-        clientId: '',
-        clientSecret: '',
+        apiToken: '',
         persisted: true,
       })))
       setEvidenceDirectory(evidenceDirectory.trim())
@@ -374,6 +340,21 @@ export function GeoSettingsCard(props: GeoSettingsCardProps): ReactNode {
       }
     } finally {
       setBusy(false)
+    }
+  }
+
+  // 工具级隔离开关：即时生效（直接写本行的 restrictTools），不走「保存配置」那条表单流程。
+  // 开启 = 本实例所有 Agent 只看得见 GEO 工具；关闭 = 立刻恢复本实例原有工具。
+  const restrictTools = value.restrictTools !== false
+  const setRestriction = async (next: boolean): Promise<void> => {
+    setIsolationBusy(true)
+    setIsolationError(undefined)
+    try {
+      await scope.set('restrictTools', next)
+    } catch (error) {
+      setIsolationError(errorMessage(error))
+    } finally {
+      setIsolationBusy(false)
     }
   }
 
@@ -411,7 +392,7 @@ export function GeoSettingsCard(props: GeoSettingsCardProps): ReactNode {
             <h3 className={styles.sectionTitle}>GEO 服务</h3>
             <Field
               label="GEO 服务 IP / 域名"
-              hint="只填协议、主机和端口；插件会自动补上 /geo 与 /auth/machine-token。内网地址也必须走 HTTPS。"
+              hint="只填协议、主机和端口；业务请求直接携带项目令牌。内网地址也必须走 HTTPS。"
               value={apiBaseUrl}
               placeholder="https://192.168.2.110:端口"
               testId="geo-api-base-url"
@@ -445,20 +426,19 @@ export function GeoSettingsCard(props: GeoSettingsCardProps): ReactNode {
             <div className={styles.sectionHeading}>
               <div>
                 <h3 className={styles.sectionTitle}>项目授权</h3>
-                <p className={styles.sectionHint}>每个项目使用唯一 Client ID 和机器客户端；绑定的服务账号应只加入对应 GEO 项目。</p>
+                <p className={styles.sectionHint}>每个 DSH 项目绑定一个 GEO 项目令牌；令牌在 GEO 项目档案中创建、限时并可随时撤销。</p>
               </div>
               <button className={styles.ghostButton} type="button" disabled={busy || !snapshot.writable} onClick={addProject}>＋ 添加项目</button>
             </div>
 
             {projects.length === 0 ? (
-              <div className={styles.emptyProjects}>添加一个项目 ID，并填写为该项目创建的 Client ID 和 Secret。</div>
+              <div className={styles.emptyProjects}>添加项目 ID，并粘贴在 GEO 对应项目档案中创建的 API 令牌。</div>
             ) : projects.map((project, index) => {
               const projectId = project.projectId.trim()
               const refs = validProjectId(projectId) ? credentialRefs(projectId) : undefined
-              const idInfo = refs ? credentialState[refs.clientId] : undefined
-              const secretInfo = refs ? credentialState[refs.clientSecret] : undefined
-              const bothConfigured = idInfo?.configured === true && secretInfo?.configured === true
-              const externalManaged = idInfo?.writable === false || secretInfo?.writable === false
+              const tokenInfo = refs ? credentialState[refs.apiToken] : undefined
+              const tokenConfigured = tokenInfo?.configured === true
+              const externalManaged = tokenInfo?.writable === false
               return (
                 <div className={styles.projectCard} key={project.draftKey} data-testid={`geo-project-row-${index}`}>
                   <div className={styles.projectHeader}>
@@ -466,12 +446,11 @@ export function GeoSettingsCard(props: GeoSettingsCardProps): ReactNode {
                       <span className={styles.projectIcon}>{index + 1}</span>
                       <div>
                         <strong className={styles.projectTitle}>{project.name.trim() || (projectId ? `项目 ${projectId}` : '新项目授权')}</strong>
-                        <span className={styles.projectSubtitle}>{bothConfigured ? '凭据已配置 · Bearer 将按此项目单独换取' : '待配置项目凭据'}</span>
+                        <span className={styles.projectSubtitle}>{tokenConfigured ? '项目令牌已安全保存 · GEO 会校验绑定项目' : '待配置项目令牌'}</span>
                       </div>
                     </div>
                     <div className={styles.credentialStates}>
-                      <CredentialState label="Client ID" info={idInfo} />
-                      <CredentialState label="Client Secret" info={secretInfo} />
+                      <CredentialState label="项目 API 令牌" info={tokenInfo} />
                     </div>
                   </div>
                   <div className={styles.twoColumns}>
@@ -493,29 +472,17 @@ export function GeoSettingsCard(props: GeoSettingsCardProps): ReactNode {
                       onChange={(next) => updateProject(project.draftKey, 'name', next)}
                     />
                   </div>
-                  <div className={styles.twoColumns}>
-                    <Field
-                      label="该项目 Client ID"
-                      hint="由 GEO 管理员为该项目的专用服务账号创建。"
-                      value={project.clientId}
-                      placeholder={idInfo?.configured ? '已安全保存；留空表示不更改' : '例如 geo-project-210010'}
-                      testId={`geo-project-client-id-${index}`}
-                      autoComplete="off"
-                      disabled={busy || idInfo?.writable === false}
-                      onChange={(next) => updateProject(project.draftKey, 'clientId', next)}
-                    />
-                    <Field
-                      label="该项目 Client Secret"
-                      hint="写入 DSH Credentials，只写入、不回显；轮换时重新输入。"
-                      value={project.clientSecret}
-                      type="password"
-                      placeholder={secretInfo?.configured ? '已安全保存；留空表示不更改' : '32–72 位，不含空格'}
-                      testId={`geo-project-client-secret-${index}`}
-                      autoComplete="new-password"
-                      disabled={busy || secretInfo?.writable === false}
-                      onChange={(next) => updateProject(project.draftKey, 'clientSecret', next)}
-                    />
-                  </div>
+                  <Field
+                    label="该项目 API 令牌"
+                    hint="从 GEO 项目档案复制创建时显示的一次性令牌；写入 DSH Credentials 后不回显。轮换时在 GEO 撤销旧令牌并粘贴新令牌。"
+                    value={project.apiToken}
+                    type="password"
+                    placeholder={tokenInfo?.configured ? '已安全保存；留空表示不更改' : '粘贴该项目的 geop_ 令牌'}
+                    testId={`geo-project-api-token-${index}`}
+                    autoComplete="new-password"
+                    disabled={busy || tokenInfo?.writable === false}
+                    onChange={(next) => updateProject(project.draftKey, 'apiToken', next)}
+                  />
                   {confirmRemoveKey === project.draftKey ? (
                     <div className={styles.confirmRow}>
                       <span>移除该项目后，保存时会清理可写的 DSH 凭据。继续吗？</span>
@@ -532,9 +499,43 @@ export function GeoSettingsCard(props: GeoSettingsCardProps): ReactNode {
 
             <div className={styles.tokenNote}>
               <span className={styles.tokenGlyph}>B</span>
-              <span><strong>Bearer Token 按项目自动换取</strong><br />调用时用 projectId 选择对应机器客户端；短期令牌按项目缓存在插件进程内存中，页面、Skill 和工具结果不会显示令牌原文。</span>
+              <span><strong>Bearer 按项目绑定</strong><br />每个项目的令牌单独保存在 DSH Credentials。连接检查会确认令牌实际绑定的 GEO 项目；页面、Skill 和工具结果不会显示令牌原文。</span>
             </div>
             {credentialError ? <p className={styles.inlineError}>{credentialError}</p> : null}
+          </div>
+
+          <div className={styles.section}>
+            <div className={styles.sectionHeading}>
+              <div>
+                <h3 className={styles.sectionTitle}>运行隔离</h3>
+                <p className={styles.sectionHint}>
+                  开启后，本 DSH 实例里所有 Agent 只看得见这 5 个 GEO 工具（shell、文件、浏览器等一律隐藏）；
+                  关闭则立刻恢复本实例原有的全部工具。开关即时生效，不需要重启。
+                </p>
+              </div>
+              <label className={styles.switch}>
+                <input
+                  className={styles.switchInput}
+                  type="checkbox"
+                  role="switch"
+                  checked={restrictTools}
+                  disabled={isolationBusy || !snapshot.writable}
+                  data-testid="geo-restrict-tools"
+                  onChange={(event) => { void setRestriction(event.target.checked) }}
+                />
+                <span className={`${styles.switchTrack} ${restrictTools ? styles.switchTrackOn : ''}`} aria-hidden="true">
+                  <span className={styles.switchThumb} />
+                </span>
+                <span className={styles.switchLabel}>{restrictTools ? '已开启 · 仅 GEO 工具' : '已关闭 · 保留全部工具'}</span>
+              </label>
+            </div>
+            <p className={styles.hint}>
+              {restrictTools
+                ? '隔离生效中：本实例只暴露 GEO 的 5 个工具。'
+                : '隔离已关闭：GEO 工具与其它工具同时可用，此时 GEO 令牌与通用工具处在同一个环境里。'}
+              切换后立即写入，没变化就完全退出 DSH 再启动；需要与日常环境彻底隔开时改用独立实例（换 home 必须重启，做法见说明书）。
+            </p>
+            {isolationError ? <p className={styles.inlineError}>{isolationError}</p> : null}
           </div>
 
           <div className={styles.footer}>
@@ -547,12 +548,14 @@ export function GeoSettingsCard(props: GeoSettingsCardProps): ReactNode {
             >
               {busy ? '保存中…' : '保存配置'}
             </button>
-            {saved ? <span className={styles.success}>项目配置已保存；首次调用时会换取该项目的 Bearer Token。</span> : null}
+            {saved ? <span className={styles.success}>项目配置已保存；可运行连接检查确认令牌与 GEO 项目匹配。</span> : null}
             {failure ? <span className={styles.failure} role="alert">{failure}</span> : null}
           </div>
 
           <p className={styles.compliance}>
-            每次调用 <code>geo_api</code> 和 <code>geo_connection_status</code> 都要指定项目 ID；保存后可按项目运行 <code>geo_connection_status</code> 验证机器账号，不执行 GEO 业务写入。
+            <code>geo_api</code> 与 <code>geo_connection_status</code> 每次都要指定项目 ID，检测与报告按人工节点确认。
+            <strong>说明书</strong>：DSH 里输入 <code>/geo-workflow</code>，或读
+            <code>&lt;DSH_HOME&gt;\skills\geo-workflow\references\operator-guide.md</code>。
           </p>
         </div>
       ) : null}

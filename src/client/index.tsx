@@ -35,7 +35,10 @@ type ClientContext = Context & {
 }
 
 export const name = 'geo-agent-dsh-plugin-client'
-export const inject = ['slots', 'locale', 'remote']
+// `remote.credentials` 必须显式声明：cordis 的 remote 是校验型代理，
+// 取一个未注入的子命名空间会**直接抛错**（不是返回 undefined），
+// 而那个抛错发生在注册卡片之前 —— 会让整张卡永远注册不上。
+export const inject = ['slots', 'locale', 'remote', 'remote.credentials']
 
 export function apply(rawContext: Context): void {
   const ctx = rawContext as ClientContext
@@ -44,22 +47,47 @@ export function apply(rawContext: Context): void {
 
   // configForms is only mounted for namespaces the Host currently serves.
   // Keeping it nested lets the rest of the client bundle load on older hosts.
+  //
+  // 这一段绝不能静默：曾经因为一行「次要依赖」（remote.credentials 未在 inject 里声明）
+  // 抛出 `cannot get property "remote.credentials" without inject`，把整张卡片一起带走，
+  // 而 Console 里连红字都没有。任何失败都必须留下日志。
   ctx.inject(['configForms'], (scoped) => {
-    const formScope = scoped.configForms?.get(PROFILE_ENTRY_ID)
-    if (!formScope) return
+    try {
+      const formScope = scoped.configForms?.get(PROFILE_ENTRY_ID)
+      if (!formScope) {
+        console.warn(`[geo-agent-dsh-plugin] 宿主未提供「${PROFILE_ENTRY_ID}」的配置表单，GEO 工作台卡片不会出现。`)
+        return
+      }
+      if (typeof formScope.getSnapshot !== 'function'
+        || typeof formScope.subscribe !== 'function'
+        || typeof formScope.set !== 'function') {
+        console.warn(`[geo-agent-dsh-plugin] 配置表单 scope 形状不符合预期；实际键：${Object.keys(formScope).join(',') || '(无)'}`)
+        return
+      }
 
-    const getSnapshot = formScope.getSnapshot.bind(formScope)
-    const subscribe = formScope.subscribe.bind(formScope)
-    const scope = { ...formScope, getSnapshot, subscribe, set: formScope.set.bind(formScope) }
-    const useSnapshot = () => useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
-    const credentialRemote = scoped.remote?.credentials
-    const injected = (): GeoSettingsCardProps => ({ scope, useSnapshot, t, credentials: credentialRemote })
+      const getSnapshot = formScope.getSnapshot.bind(formScope)
+      const subscribe = formScope.subscribe.bind(formScope)
+      const scope = { ...formScope, getSnapshot, subscribe, set: formScope.set.bind(formScope) }
+      const useSnapshot = () => useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
+      // 兜底：即便某个宿主没提供 credentials 远端，也只能让「凭据相关功能」退化，
+      // 绝不能让卡片本身注册不上（这正是这张卡长期不出现的直接原因）。
+      const credentialRemote = (() => {
+        try {
+          return scoped.remote?.credentials
+        } catch {
+          return undefined
+        }
+      })()
+      const injected = (): GeoSettingsCardProps => ({ scope, useSnapshot, t, credentials: credentialRemote })
 
-    scoped.effect(() => scoped.slots.inject('plugins.bundle.config', () => scoped.slots.register({
-      name: 'plugins.bundle.config',
-      key: BUNDLE_PACKAGE,
-      locale: LOCALE_NAMESPACE,
-      inject: injected,
-    }, (ownerProps = {}) => ownerProps.view === 'summary' ? null : <GeoSettingsCard {...injected()} />)), 'geo-workbench: plugin configuration card')
+      scoped.effect(() => scoped.slots.inject('plugins.bundle.config', () => scoped.slots.register({
+        name: 'plugins.bundle.config',
+        key: BUNDLE_PACKAGE,
+        locale: LOCALE_NAMESPACE,
+        inject: injected,
+      }, (ownerProps = {}) => ownerProps.view === 'summary' ? null : <GeoSettingsCard {...injected()} />)), 'geo-workbench: plugin configuration card')
+    } catch (error) {
+      console.warn('[geo-agent-dsh-plugin] GEO 工作台卡片注册失败：', error)
+    }
   })
 }

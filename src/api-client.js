@@ -187,7 +187,7 @@ function redact(value) {
   if (!isPlainObject(value)) return value;
   return Object.fromEntries(Object.entries(value).map(([key, child]) => [
     key,
-    /^(?:accessToken|refreshToken|apiKey|authorization|password|secret|cookie)$/i.test(key)
+    /^(?:accessToken|refreshToken|apiKey|token|authorization|password|secret|cookie)$/i.test(key)
       ? '[redacted]'
       : redact(child),
   ]));
@@ -238,7 +238,7 @@ export async function executeGeoOperation({ catalog, operationName, args, baseUr
   const normalizedArgs = { ...args, headers: idempotencyHeaders };
   const validationErrors = validateOperationArgs(operation, normalizedArgs, catalog);
   if (validationErrors.length) return { ok: false, outcome: 'rejected', error: 'Request does not match the canonical GEO OpenAPI contract', validationErrors };
-  if (typeof token !== 'string' || token.trim() === '') return { ok: false, outcome: 'rejected', error: 'GEO machine authentication did not return an access token; check the isolated DSH profile credentials' };
+  if (typeof token !== 'string' || token.trim() === '') return { ok: false, outcome: 'rejected', error: 'GEO project API token is not configured for this project.' };
 
   let origin;
   try { origin = resolveApiOrigin(baseUrl); }
@@ -379,7 +379,7 @@ export async function executeGeoEvidenceUpload({ catalog, args, evidenceDirector
     const keyErrors = validateValue(args.idempotencyKey, idemParam.schema, 'headers.X-Idempotency-Key', catalog.schemas);
     if (keyErrors.length) return { ok: false, outcome: 'rejected', error: 'idempotencyKey does not match the canonical GEO OpenAPI contract', validationErrors: keyErrors };
   }
-  if (typeof token !== 'string' || token.trim() === '') return { ok: false, outcome: 'rejected', error: 'GEO machine authentication did not return an access token; check the isolated DSH profile credentials' };
+  if (typeof token !== 'string' || token.trim() === '') return { ok: false, outcome: 'rejected', error: 'GEO project API token is not configured for this project.' };
 
   let origin;
   try { origin = resolveApiOrigin(baseUrl); }

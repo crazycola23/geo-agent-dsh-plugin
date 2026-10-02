@@ -2,15 +2,36 @@
   "name": "@geo-internal/geo-agent-dsh-plugin",
   "version": "0.1.0",
   "private": true,
-  "description": "DSH tools for the internal GEO operations workflow",
+  "description": "Run the GEO content workflow from DSH: project material, question sets, articles, publishing, detection and reports — with a per-project API token and an approval step before every write.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/crazycola23/geo-agent-dsh-plugin.git"
+  },
+  "homepage": "https://github.com/crazycola23/geo-agent-dsh-plugin#readme",
+  "bugs": {
+    "url": "https://github.com/crazycola23/geo-agent-dsh-plugin/issues"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "geo",
+    "content-workflow"
+  ],
   "type": "module",
   "main": "./src/index.js",
+  "icon": "./icon.svg",
   "exports": {
     ".": "./src/index.js",
-    "./client": "./lib/client.js"
+    "./package.json": "./package.json",
+    "./client": "./lib/client.js",
+    "./locale/*.json": "./locale/*.json"
   },
   "files": [
     "cordis.patch.yml",
+    "icon.svg",
+    "locale/*.json",
     "src/index.js",
     "src/config.js",
     "src/auth-provider.js",
@@ -20,7 +41,9 @@
     "src/generated/openapi.catalog.json",
     "src/client",
     "lib/client.js",
-    "tsdown.client.config.ts"
+    "tsdown.client.config.ts",
+    "scripts/install-skill.mjs",
+    "sources"
   ],
   "dsh": {
     "bundle": {
@@ -40,6 +63,7 @@
     "build:client": "tsdown -c ./tsdown.client.config.ts",
     "generate:catalog": "node ./scripts/generate-catalog.mjs",
     "prepack": "npm run build:client",
+    "install:skill": "node ./scripts/install-skill.mjs",
     "test": "node --test",
     "validate": "node ./scripts/validate-catalog.mjs"
   },

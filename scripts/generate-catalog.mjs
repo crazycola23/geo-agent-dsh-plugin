@@ -7,33 +7,9 @@ import yaml from 'js-yaml';
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..');
 const defaultSpec = resolve(repoRoot, '..', 'scrm-specs', '30-contracts', '08-openapi.yaml');
+const defaultPermissionPolicy = resolve(repoRoot, '..', 'scrm-specs', '30-contracts', '07-权限码与路由清单.yaml');
 const defaultCatalog = resolve(repoRoot, 'src', 'generated', 'openapi.catalog.json');
 const defaultCoverage = resolve(repoRoot, '..', 'geo-workflow', 'references', 'capability-map.md');
-
-const selectedTags = new Set([
-  'workbench', 'agent', 'project', 'fact', 'question', 'content', 'article-card',
-  'publish', 'detect', 'report', 'cost', 'audit',
-]);
-
-const deniedPathPatterns = [
-  { pattern: /(?:^|\/)admin(?:\/|$)/i, reason: '跨项目管理员操作不暴露给 GEO 运营 Agent' },
-  { pattern: /\/upload(?:\/|$)/i, reason: '仅通过受限的专用资料上传工具处理文件' },
-  { pattern: /\/file(?:\/|$)/i, reason: '原始文件读取使用 GEO 页面' },
-  { pattern: /\/callback(?:\/|$)/i, reason: 'Provider 回调只能由受信任 Provider 调用' },
-  { pattern: /\/send-external(?:\/|$)/i, reason: '客户外发不属于内部 GEO 运营工具' },
-];
-
-const deniedPermissionCodes = new Map([
-  ['geo:collector:account:admin', '全租户采集账号明细超出 GEO 运营 Agent 的项目范围'],
-  ['geo:project:archive', '项目归档不属于 GEO 运营 Agent 的日常项目操作'],
-  ['geo:project:delete', '项目删除或已发布记录撤回属于高风险治理操作'],
-  ['geo:project:restore', '恢复归档项目及其高风险例外操作不属于 GEO 运营 Agent 的范围'],
-  ['geo:content:delete', '删除内容任务属于高风险治理操作'],
-  ['geo:channel:manage', '发布目标配置由 GEO 管理员维护'],
-  ['geo:budget:release', '租户资金池与预算放行超出 GEO 项目运营范围'],
-  ['geo:audit:view', '管理端审计读取不暴露给 GEO 运营 Agent'],
-  ['geo:audit:export', '管理端审计导出不暴露给 GEO 运营 Agent'],
-]);
 
 function pointer(document, ref) {
   if (!ref.startsWith('#/')) throw new Error(`External OpenAPI ref is unsupported: ${ref}`);
@@ -102,7 +78,30 @@ function collectSchemaRefs(value, refs = new Set()) {
   return refs;
 }
 
-function generate(document, specText) {
+function compilePathPattern(pattern) {
+  const escaped = pattern
+    .replace(/[.+?^$()|[\]\\]/g, '\\$&')
+    .replace(/\{[^/{}]+\}/g, '[^/]+')
+    .replaceAll('**', '.*');
+  return new RegExp(`^${escaped}$`);
+}
+
+function generate(document, specText, tokenPolicy) {
+  if (!Array.isArray(tokenPolicy?.allowedScopes) || tokenPolicy.allowedScopes.length === 0) {
+    throw new Error('07.projectApiTokens.allowedScopes is required to generate the DSH catalog');
+  }
+  if (!Array.isArray(tokenPolicy?.toolTags) || tokenPolicy.toolTags.length === 0) {
+    throw new Error('07.projectApiTokens.toolTags is required to generate the DSH catalog');
+  }
+  const allowedScopes = new Set(tokenPolicy.allowedScopes);
+  const selectedTags = new Set(tokenPolicy.toolTags);
+  const readOnlyTags = new Set(tokenPolicy.readOnlyTags || []);
+  const pathExceptions = new Set(tokenPolicy.allowedPathExceptions || []);
+  const excludedSegments = new Set(tokenPolicy.excludedPathSegments || []);
+  const excludedPathPatterns = (tokenPolicy.excludedToolPaths || []).map(pattern => ({
+    pattern: compilePathPattern(pattern),
+    reason: '该端点在 07.projectApiTokens.excludedToolPaths 中排除',
+  }));
   const operations = {};
   const excluded = [];
   for (const [path, pathItemCandidate] of Object.entries(document.paths || {})) {
@@ -114,16 +113,27 @@ function generate(document, specText) {
       if (!tag) continue;
 
       let reason = null;
-      const isConstrainedEvidenceUpload = path === '/evidence-sources/upload';
-      const denied = isConstrainedEvidenceUpload
-        ? null
-        : deniedPathPatterns.find(entry => entry.pattern.test(path));
-      if (denied) reason = denied.reason;
-      const permissionCode = raw['x-permission'] || null;
-      if (!reason && deniedPermissionCodes.has(permissionCode)) {
-        reason = deniedPermissionCodes.get(permissionCode);
+      const security = raw.security ?? document.security ?? [];
+      if (!security.some(requirement => Object.hasOwn(requirement, 'ProjectApiToken'))) {
+        reason = 'OpenAPI 未允许 GEO 项目令牌认证';
       }
-      if (!reason && (tag === 'audit' || tag === 'cost') && method.toLowerCase() !== 'get') {
+      const policyExcluded = excludedPathPatterns.find(entry => entry.pattern.test(path));
+      // Explicit route exclusions are the source of truth for sensitive or
+      // unscoped endpoints, so preserve that reason ahead of generic scope
+      // filtering in the generated catalog.
+      if (policyExcluded) reason = policyExcluded.reason;
+      const excludedSegment = [...excludedSegments].find(segment => path.split('/').includes(segment));
+      if (!reason && excludedSegment && !pathExceptions.has(path)) {
+        reason = `该路径段 ${excludedSegment} 在 07.projectApiTokens.excludedPathSegments 中排除`;
+      }
+      const permissionCode = raw['x-permission'] || null;
+      if (!reason && !permissionCode) {
+        reason = '缺少 x-permission，项目绑定令牌不向通用工具开放';
+      }
+      if (!reason && !allowedScopes.has(permissionCode)) {
+        reason = '该权限不在 07.projectApiTokens.allowedScopes 中';
+      }
+      if (!reason && readOnlyTags.has(tag) && method.toLowerCase() !== 'get') {
         reason = `${tag} 写操作不属于 GEO 运营 Agent 的职责`;
       }
       if (reason) {
@@ -178,13 +188,17 @@ function generate(document, specText) {
   }
 
   const catalog = {
-    catalogVersion: 1,
+    catalogVersion: 2,
     source: {
       file: 'scrm-specs/30-contracts/08-openapi.yaml',
       sha256: createHash('sha256').update(specText).digest('hex'),
     },
     serverPath: document.servers?.[0]?.url || '/geo',
-    securityScheme: document.components?.securitySchemes?.SaToken || null,
+    securitySchemes: {
+      interactive: document.components?.securitySchemes?.SaToken || null,
+      projectToken: document.components?.securitySchemes?.ProjectApiToken || null,
+    },
+    projectApiTokenPolicy: tokenPolicy,
     selectedTags: [...selectedTags],
     operations,
     schemas,
@@ -229,10 +243,13 @@ function markdown(catalog) {
 const specPath = resolve(process.argv[2] || defaultSpec);
 const catalogPath = resolve(process.argv[3] || defaultCatalog);
 const coveragePath = resolve(process.argv[4] || defaultCoverage);
+const permissionPolicyPath = resolve(process.argv[5] || defaultPermissionPolicy);
 const specText = await readFile(specPath, 'utf8');
+const permissionPolicyText = await readFile(permissionPolicyPath, 'utf8');
 const document = yaml.load(specText);
+const permissionPolicy = yaml.load(permissionPolicyText);
 if (!document?.openapi?.startsWith('3.')) throw new Error('Expected an OpenAPI 3.x document');
-const catalog = generate(document, specText);
+const catalog = generate(document, specText, permissionPolicy.projectApiTokens);
 await mkdir(dirname(catalogPath), { recursive: true });
 await mkdir(dirname(coveragePath), { recursive: true });
 await writeFile(catalogPath, `${JSON.stringify(catalog, null, 2)}\n`, 'utf8');

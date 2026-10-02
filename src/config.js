@@ -14,6 +14,12 @@ export const Config = Schema.object({
   apiBaseUrl: Schema.string().default(process.env.GEO_API_BASE_URL ?? '').volatile(),
   evidenceDirectory: Schema.string().default(process.env.GEO_EVIDENCE_DIRECTORY ?? '').volatile(),
   timeoutMs: Schema.number().min(1_000).max(120_000).step(1_000).default(defaultTimeout).volatile(),
+  // Tool-level isolation switch. When true (default) every agent in the running
+  // DSH runtime is restricted to this plugin's own tools — correct inside a
+  // dedicated GEO-only DSH home, catastrophic in a shared profile because it
+  // masks every unrelated tool. Set false in the profile's cordis.patch.yml to
+  // keep the GEO tools without the restriction. See setup.md.
+  restrictTools: Schema.boolean().default(true).volatile(),
   projects: Schema.array(Schema.object({
     projectId: Schema.string(),
     name: Schema.string().default(''),
@@ -30,6 +36,7 @@ export function pluginSettings(config = {}, env = process.env) {
   const configuredEvidenceDirectory = currentValue(config.evidenceDirectory);
   const timeout = Number(currentValue(config.timeoutMs));
   const configuredProjects = currentValue(config.projects);
+  const configuredRestrictTools = currentValue(config.restrictTools);
   return {
     baseUrl: typeof configuredBaseUrl === 'string' && configuredBaseUrl.trim() !== ''
       ? configuredBaseUrl.trim()
@@ -40,6 +47,7 @@ export function pluginSettings(config = {}, env = process.env) {
     timeoutMs: Number.isFinite(timeout) && timeout >= 1_000 && timeout <= 120_000
       ? timeout
       : defaultTimeout,
+    restrictTools: configuredRestrictTools === undefined ? true : Boolean(configuredRestrictTools),
     projects: Array.isArray(configuredProjects) ? configuredProjects.map(project => ({
       projectId: typeof project?.projectId === 'string' ? project.projectId.trim() : '',
       name: typeof project?.name === 'string' ? project.name.trim() : '',

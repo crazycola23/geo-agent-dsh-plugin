@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "GEO Workbench",
+    "description": "Run the GEO content workflow from DSH: project material, question sets, articles, publishing, detection and reports. Every write asks for your approval first, and each project uses its own API token."
+  }
+}

@@ -12,8 +12,7 @@ test('project ids are normalized without accepting malformed or unsafe numeric v
 
 test('each project has distinct DSH credential references', () => {
   assert.deepEqual(projectCredentialRefs('101'), {
-    clientId: 'GEO_PROJECT_101_CLIENT_ID',
-    clientSecret: 'GEO_PROJECT_101_CLIENT_SECRET',
+    apiToken: 'GEO_PROJECT_101_API_TOKEN',
   });
   assert.notDeepEqual(projectCredentialRefs('101'), projectCredentialRefs('202'));
   assert.throws(() => projectCredentialRefs('not-a-project'), /positive GEO project identifier/);

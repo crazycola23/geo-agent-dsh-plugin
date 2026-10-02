@@ -2,7 +2,64 @@
 
 Native DeepSeek Harness tools for the internal GEO workflow. It calls GEO's existing authenticated APIs; it does not modify the DSH upstream runtime or GEO backend.
 
-## Compatibility
+---
+
+## 安装
+
+这是一个 **DSH bundle** —— 装完由 DSH 自己加载，不需要手动改任何 profile 文件。
+
+**前置条件**
+
+- DeepSeek Harness `0.2.0-rc.2`（`peerDependencies` 锁定这一版）
+- Node.js `>= 22.19`
+- **一个可访问的 GEO 服务**：本插件只是 DSH 侧的客户端，没有 GEO 后端就没有可执行的操作
+
+**方式一：让 DSH 自己装（推荐）**
+
+把仓库克隆到本地，然后在 DSH 对话里说：
+
+```
+用 plugin_manager 安装 bundle，target 是 <克隆下来的绝对路径>
+```
+
+`plugin_manager` 的 `install_bundle` 会自己完成依赖安装与 bundle 选择 —— **不要**用 shell 手动写 profile 的
+`package.json` / `cordis.patch.yml`，也不要手动跑 pnpm。
+
+**方式二：命令行**
+
+```bash
+dsh plugin --profile <profile> add <克隆下来的目录>
+# 或直接从 GitHub 装：
+dsh plugin --profile <profile> add github:crazycola23/geo-agent-dsh-plugin
+```
+
+**方式三：压缩包** —— 下载仓库 ZIP 解压，按方式一或方式二安装本地目录即可。
+
+**装完请完全退出 DSH 再启动。** 新装的 bundle 可以通过 HMR 激活，但**替换已安装的包必须重启**才会加载新的前端模块。
+
+**装完在哪配置**：DSH → 插件 → 点开 `@geo-internal/geo-agent-dsh-plugin` → **GEO 工作台**卡片：
+
+1. **GEO 服务地址** —— 只填协议 + 主机 + 端口（例如 `https://geo.example.com:8443`），**不要带路径**
+2. **资料投递目录**（可选）—— 需要证据上传时填
+3. **项目授权** —— 每个 GEO 项目一行，填该项目 ID + **属于该项目的** API 令牌
+
+保存后用 `geo_connection_status` 逐个项目验证绑定关系。
+
+> 面向使用者的完整说明见 [`sources/geo-workflow/references/operator-guide.md`](sources/geo-workflow/references/operator-guide.md)；
+> 也可以把配套 Skill 装进 `<DSH_HOME>\skills\geo-workflow` 后，在 DSH 里输入 `/geo-workflow` 调用。
+
+### 一把开关：运行隔离
+
+卡片里的「运行隔离」决定这个 DSH 实例给 Agent 看多少工具：
+
+- **开**：只暴露本插件的 GEO 工具，终端、文件、浏览器等一律不可见 —— 适合把 GEO 令牌与通用工具隔开
+- **关**：GEO 工具与其它工具同时可用（方便，但令牌与通用工具处在同一环境）
+
+切换后配置立即写入；若工具列表没有马上变化，**完全退出 DSH 再启动**一定生效。
+
+---
+
+## 兼容性与行为
 
 - DeepSeek Harness `0.2.0-rc.2`
 - Node.js `>=22.19`
