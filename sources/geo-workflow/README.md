@@ -9,6 +9,7 @@
 - `references/capability-map.md`：从 OpenAPI 自动生成的操作覆盖清单
 - `references/setup.md`：DSH 独立 profile 安装及使用方法
 - `references/maintenance.md`：规格更新、生成和校验办法
+- `references/operator-guide.md`：面向日常使用者的说明书（卡片在哪、怎么配、隔离开关、换 home 为什么要重启、常见问题）
 
 ## 快速使用
 

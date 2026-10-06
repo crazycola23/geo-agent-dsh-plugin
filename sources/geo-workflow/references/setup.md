@@ -46,13 +46,44 @@ $env:DSH_HOME = $DshHome
 dsh --profile geo-workflow
 ```
 
-填写 GEO 服务 IP/域名和端口、资料投递目录（按需），然后在"项目授权"区域为每个项目分别添加项目 ID、名称和项目 API 令牌。每个项目必须用**属于该项目**的令牌；设置卡会检查当前填写的重复项，运行时也会核验已保存的项目凭据，发现重复就拒绝认证。不要把一个令牌配置给不同项目。可以只输入 `192.168.2.110:8443`，页面会按 HTTPS 解释；只有 localhost/loopback 才允许 HTTP。地址只接受服务 origin，不加 `/geo`、其他路径或 query，插件会自动拼接校验路径 `/auth/project-token-context` 和业务路径 `/geo`。不要把令牌写进仓库、Skill、`.env` 或命令行参数。
+填写 GEO 服务 IP/域名和端口、资料投递目录（按需），然后在"项目授权"区域为每个项目分别添加项目 ID、名称和项目 API 令牌。每个项目必须用**属于该项目**的令牌；设置卡会检查当前填写的重复项，运行时也会核验已保存的项目凭据，发现重复就拒绝认证。不要把一个令牌配置给不同项目。可以只输入 `192.168.2.110:8443`，页面会按 HTTPS 解释；只有 localhost/loopback 才允许 HTTP。地址只接受服务 origin，不加 `/geo`、其他路径或 query，插件会自动拼接校验路径 `/auth/project-token-context` 和业务路径 `/geo`。**若部署在网关前缀之后**（例如 nginx 用 `location /prod-api/` 转发并吃掉前缀），在「网关路径前缀」里填对应的 `/prod-api`；直连部署留空。该前缀同时作用于业务请求与令牌校验，只填在地址里无效。不要把令牌写进仓库、Skill、`.env` 或命令行参数。
 
 保存后对每个项目分别调用 `geo_connection_status({ projectId })` 验证绑定项目、权限码与有效期。运行 GEO 任务时，`geo_api` 和 `geo_upload_evidence` 使用目标项目 ID 选择对应令牌；令牌直连使用，不换票、无exchange 缓存。页面只显示凭据是否已保存，不回显令牌明文。令牌到期或撤销后下一次请求即被拒绝。
 
 如果环境变量 `GEO_API_BASE_URL`、`GEO_EVIDENCE_DIRECTORY` 或 `GEO_API_TIMEOUT_MS` 已设置，它们可作为默认配置来源；使用设置卡时请清除不需要的同名变量，避免沿用旧地址或目录。
 
 DSH 本地凭据文件可以被同一 Windows 用户运行的进程读取。GEO profile 因此只向模型开放 GEO 插件工具，不暴露 shell、任意 HTTP 或通用文件工具；这是工具级隔离，不是抵御同一 Windows 用户下恶意进程的系统安全边界。共享无人值守部署应由组织批准 OS keychain 或 Secret Manager 凭据提供方。详见 [DSH 凭据说明](https://github.com/deepseek-ai/deepseek-harness/blob/639ed015397290b3745d163aafe02ffee4aa3f84/packages/credentials/credentials-local/README.md)。
+
+### 工具级隔离与 `restrictTools` 开关
+
+上面的隔离是插件主动实施的：它对**运行时里每一个 agent**（现有和之后新建的）调用
+`agent.ctx.tools.restrict({ allow: <5 个 GEO 工具> })`。因此在同一个 DSH 实例里，
+除了这 5 个 GEO 工具以外**什么工具都看不到**——包括 shell、文件、浏览器和电脑操控。
+
+- 在**专用 GEO DSH Home**（本页的用法）里，这就是想要的效果。
+- 装进**共享 profile**（例如桌面应用自己的 profile）时，它会连带屏蔽掉该 profile 原本的**全部**工具。
+  表现是界面提示「工具已更新 · 新增 N 个，移除 M 个」，而 `dsh plugin list`、配置组合和启动日志
+  **全都正常**，没有 `did not activate` 之类的报错——所以这类误装不会自己暴露。**不要把本插件装进共享 profile。**
+
+需要「保留其它工具、只要 GEO 工具」时，用开关关掉限制，不要改默认值：
+
+```yaml
+# restrict-off.patch.yml
+- id: geo-agent-dsh-plugin
+  name: '@geo-internal/geo-agent-dsh-plugin'
+  config:
+    restrictTools: false
+```
+
+```powershell
+$env:DSH_HOME = $DshHome
+dsh --patch .\restrict-off.patch.yml --profile geo-workflow
+```
+
+`--patch` 必须放在 `--profile` **之前**，放后面会报 `error: unknown option '--patch'`。
+
+`restrictTools` 默认为 `true`；为 `true` 时插件会在启动时向 stderr 打印一条明确告警
+（说明隔离已生效以及如何关闭），这是刻意的——避免误装后静默失效。
 
 ## 使用 Skill
 

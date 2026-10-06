@@ -1,6 +1,6 @@
 # GEO 工具覆盖目录（自动生成）
 
-OpenAPI SHA-256：`7924c298edae4b3dac5da80e0fa95adbcc85c680b23d89f53ffee44e7358a4fb`
+OpenAPI SHA-256：`6b7e1a2d785a7b337f4e0b967a64903981bc9e0574e9687580de874fa020a464`
 
 端点来自 `scrm-specs/30-contracts/08-openapi.yaml`。修改该契约后，在插件目录执行 `npm run generate:catalog`；不要手改下列清单或 `src/generated/openapi.catalog.json`。生成器会验证路由名冲突与请求体引用。
 

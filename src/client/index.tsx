@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from 'react'
+import type { ReactNode } from 'react'
 import type { Context } from '@deepseek-ai/cordis'
 import { GeoSettingsCard } from './GeoSettingsCard.tsx'
 import type { GeoSettingsCardProps } from './GeoSettingsCard.tsx'
@@ -7,6 +8,19 @@ import { en, zh } from './locales.ts'
 const LOCALE_NAMESPACE = 'settings.geo-workbench'
 const BUNDLE_PACKAGE = '@geo-internal/geo-agent-dsh-plugin'
 const PROFILE_ENTRY_ID = 'geo-agent-dsh-plugin'
+// 主视图页与侧边栏入口共用同一个 key，宿主靠它把两者关联起来。
+const PAGE_KEY = 'geo-workbench'
+
+/** 侧边栏入口图标，契约同官方插件：接收 { size }。 */
+function GeoIcon({ size = 16 }: { size?: number }): ReactNode {
+  return (
+    <svg width={size} height={size} viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <circle cx="8" cy="8" r="6.2" stroke="currentColor" strokeWidth="1.4" />
+      <ellipse cx="8" cy="8" rx="2.9" ry="6.2" stroke="currentColor" strokeWidth="1.1" />
+      <path d="M1.8 8h12.4" stroke="currentColor" strokeWidth="1.1" />
+    </svg>
+  )
+}
 
 type Snapshot = { value?: Record<string, unknown>; writable?: boolean }
 type FormScope = {
@@ -24,7 +38,7 @@ type RemoteCredentials = {
 type ClientContext = Context & {
   slots: {
     inject(name: string, register: () => unknown): void
-    register(options: Record<string, unknown>, render: (ownerProps?: { view?: string }) => unknown): unknown
+    register(options: Record<string, unknown>, component: unknown): unknown
   }
   locale: {
     register(namespace: string, dictionaries: { zh: Record<string, string>; en: Record<string, string> }): unknown
@@ -86,6 +100,23 @@ export function apply(rawContext: Context): void {
         locale: LOCALE_NAMESPACE,
         inject: injected,
       }, (ownerProps = {}) => ownerProps.view === 'summary' ? null : <GeoSettingsCard {...injected()} />)), 'geo-workbench: plugin configuration card')
+
+      // 主界面一级入口：左侧导航面板 + 主视图页，契约与官方 schedule 插件一致
+      // （slots.register({ key/id 同值 }) 把两者关联）。设置页里那张卡保持不动，
+      // 这条入口让「GEO 工作台」一次点击可达，不再藏在 设置 → 插件 → 条目 三层之下。
+      scoped.effect(() => scoped.slots.inject('main', () => scoped.slots.register({
+        name: 'main',
+        key: PAGE_KEY,
+        locale: LOCALE_NAMESPACE,
+        inject: injected,
+      }, GeoSettingsCard)), 'geo-workbench: main page')
+      scoped.effect(() => scoped.slots.inject('sidebar.panellist', () => scoped.slots.register({
+        name: 'sidebar.panellist',
+        id: PAGE_KEY,
+        order: 20,
+        locale: LOCALE_NAMESPACE,
+        label: () => t('title'),
+      }, GeoIcon)), 'geo-workbench: sidebar entry')
     } catch (error) {
       console.warn('[geo-agent-dsh-plugin] GEO 工作台卡片注册失败：', error)
     }

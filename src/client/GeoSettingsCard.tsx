@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import type { en } from './locales.ts'
+// 凭据 ref 与项目 ID 规则必须与插件运行时同源（两处各写一份曾互为漂移隐患）。
+import { normalizeProjectId, projectCredentialRefs } from '../project-context.js'
 import styles from './geo-settings.module.css'
 
 type CredentialInfo = { configured?: boolean; writable?: boolean; source?: string }
@@ -63,12 +65,9 @@ function normalizeOrigin(input: string): string {
   return url.origin
 }
 
+/** 仅做布尔化：合法项目 ID（正整数）与运行时同一套正则来源。 */
 function validProjectId(value: string): boolean {
-  return /^[1-9]\d{0,19}$/.test(value.trim())
-}
-
-function credentialRefs(projectId: string): { apiToken: string } {
-  return { apiToken: `GEO_PROJECT_${projectId}_API_TOKEN` }
+  return normalizeProjectId(value) !== undefined
 }
 
 function errorMessage(error: unknown): string {
@@ -191,7 +190,7 @@ export function GeoSettingsCard(props: GeoSettingsCardProps): ReactNode {
   }, [dirty, value.apiBaseUrl, value.apiBasePath, value.evidenceDirectory, value.timeoutMs, value.projects])
 
   const refsInUse = projects.flatMap(project => validProjectId(project.projectId)
-    ? Object.values(credentialRefs(project.projectId.trim()))
+    ? Object.values(projectCredentialRefs(project.projectId.trim()))
     : [])
   const refsKey = [...new Set(refsInUse)].sort().join('|')
 
@@ -220,7 +219,7 @@ export function GeoSettingsCard(props: GeoSettingsCardProps): ReactNode {
 
   const configuredProjectCount = projects.filter(project => {
     if (!validProjectId(project.projectId)) return false
-    const refs = credentialRefs(project.projectId.trim())
+    const refs = projectCredentialRefs(project.projectId.trim())
     return credentialState[refs.apiToken]?.configured === true
   }).length
   const endpointReady = apiBaseUrl.trim().length > 0
@@ -299,7 +298,7 @@ export function GeoSettingsCard(props: GeoSettingsCardProps): ReactNode {
         return
       }
 
-      const refs = credentialRefs(projectId)
+      const refs = projectCredentialRefs(projectId)
       const apiToken = project.apiToken.trim()
       const tokenConfigured = credentialState[refs.apiToken]?.configured === true
       if (!apiToken && !tokenConfigured) {
@@ -335,14 +334,14 @@ export function GeoSettingsCard(props: GeoSettingsCardProps): ReactNode {
       const savedIds = new Set(normalizedProjects.map(project => project.projectId))
       const idsToClear = removedProjectIds.filter(projectId => !savedIds.has(projectId))
       for (const projectId of idsToClear) {
-        const refs = credentialRefs(projectId)
+        const refs = projectCredentialRefs(projectId)
         for (const ref of Object.values(refs)) {
           if (credentialState[ref]?.writable === false) continue
           await removeCredential(credentials, ref)
         }
       }
 
-      const nextRefs = normalizedProjects.flatMap(project => Object.values(credentialRefs(project.projectId)))
+      const nextRefs = normalizedProjects.flatMap(project => Object.values(projectCredentialRefs(project.projectId)))
       setCredentialState(await describeCredentials(credentials, nextRefs))
       setCredentialError(undefined)
       setProjects(normalizedProjects.map((project, index) => ({
@@ -360,7 +359,7 @@ export function GeoSettingsCard(props: GeoSettingsCardProps): ReactNode {
     } catch (error) {
       const message = errorMessage(error)
       const refs = projects.flatMap(project => validProjectId(project.projectId)
-        ? Object.values(credentialRefs(project.projectId.trim()))
+        ? Object.values(projectCredentialRefs(project.projectId.trim()))
         : [])
       if (credentialWriteAttempted || projectSettingsSaved) {
         try {
@@ -422,10 +421,7 @@ export function GeoSettingsCard(props: GeoSettingsCardProps): ReactNode {
         aria-expanded={expanded}
         onClick={() => setExpanded(current => !current)}
       >
-        <span className={styles.brandMark} aria-hidden="true">G</span>
-        <span className={styles.heading}>
-          <span className={styles.title}>{t('title')}</span>
-        </span>
+        <span className={styles.title}>{t('title')}</span>
         <span className={`${styles.badge} ${endpointReady && configuredProjectCount > 0 ? styles.badgeReady : ''}`}>
           <span className={styles.stateDot} />{statusCopy}
         </span>
@@ -459,34 +455,32 @@ export function GeoSettingsCard(props: GeoSettingsCardProps): ReactNode {
             <h3 className={styles.sectionTitle}>GEO 服务</h3>
             <Field
               label="GEO 服务 IP / 域名"
-              hint="仅协议、主机和端口。业务请求自带项目令牌。"
+              hint="仅协议、主机和端口"
               value={apiBaseUrl}
               placeholder="https://192.168.2.110:端口"
               testId="geo-api-base-url"
               disabled={busy || !snapshot.writable}
               onChange={(next) => { markDirty(); setApiBaseUrl(next) }}
             />
+            <Field
+              label="资料投递目录"
+              hint="仅该目录下的文档可上传。"
+              value={evidenceDirectory}
+              placeholder="D:\\geo-evidence"
+              testId="geo-evidence-directory"
+              disabled={busy || !snapshot.writable}
+              onChange={(next) => { markDirty(); setEvidenceDirectory(next) }}
+            />
             <div className={styles.twoColumns}>
               <Field
-                label="资料投递目录"
-                hint="仅该目录下的文档可上传。"
-                value={evidenceDirectory}
-                placeholder="D:\\geo-evidence"
-                testId="geo-evidence-directory"
-                disabled={busy || !snapshot.writable}
-                onChange={(next) => { markDirty(); setEvidenceDirectory(next) }}
-              />
-              <Field
                 label="网关路径前缀"
-                hint="没有就留空；例如 /prod-api。"
+                hint="留空表示直连"
                 value={apiBasePath}
                 placeholder="/prod-api"
                 testId="geo-api-base-path"
                 disabled={busy || !snapshot.writable}
                 onChange={(next) => { markDirty(); setApiBasePath(next) }}
               />
-            </div>
-            <div className={styles.twoColumns}>
               <Field
                 label="请求超时（秒）"
                 type="number"
@@ -512,19 +506,15 @@ export function GeoSettingsCard(props: GeoSettingsCardProps): ReactNode {
               <div className={styles.emptyProjects}>添加项目 ID 与该项目的 API 令牌。</div>
             ) : projects.map((project, index) => {
               const projectId = project.projectId.trim()
-              const refs = validProjectId(projectId) ? credentialRefs(projectId) : undefined
+              const refs = validProjectId(projectId) ? projectCredentialRefs(projectId) : undefined
               const tokenInfo = refs ? credentialState[refs.apiToken] : undefined
-              const tokenConfigured = tokenInfo?.configured === true
               const externalManaged = tokenInfo?.writable === false
               return (
                 <div className={styles.projectCard} key={project.draftKey} data-testid={`geo-project-row-${index}`}>
                   <div className={styles.projectHeader}>
                     <div className={styles.projectTitleGroup}>
                       <span className={styles.projectIcon}>{index + 1}</span>
-                      <div>
-                        <strong className={styles.projectTitle}>{project.name.trim() || (projectId ? `项目 ${projectId}` : '新项目授权')}</strong>
-                        <span className={styles.projectSubtitle}>{tokenConfigured ? '项目令牌已安全保存 · GEO 会校验绑定项目' : '待配置项目令牌'}</span>
-                      </div>
+                      <strong className={styles.projectTitle}>{project.name.trim() || (projectId ? `项目 ${projectId}` : '新项目授权')}</strong>
                     </div>
                     <div className={styles.credentialStates}>
                       <CredentialState label="项目 API 令牌" info={tokenInfo} />
