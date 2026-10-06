@@ -2,7 +2,7 @@
   "catalogVersion": 2,
   "source": {
     "file": "scrm-specs/30-contracts/08-openapi.yaml",
-    "sha256": "a566e2ec70e1bbc91010b1899eae7ff8ae78c188bac889c988002c912dd4b84f"
+    "sha256": "6b7e1a2d785a7b337f4e0b967a64903981bc9e0574e9687580de874fa020a464"
   },
   "serverPath": "/geo",
   "securitySchemes": {
@@ -4681,7 +4681,7 @@
       "path": "/detect-records",
       "tag": "detect",
       "summary": "检测记录列表（S10 Tab3）",
-      "description": "BR-DETECT-006 五信号并列返回，每个带 value + ruleVersion + reasonCode\nBR-DETECT-007 正式 indexed 必须带 subject_scope=url|question 与对象上下文；范围无法验证时只返回保护性文案 / GEO-42406，不进入正式聚合\nBR-DETECT-009 巡检与趋势按 subject_scope + subject_id + question + platform 分组，不跨 scope 混合\nBR-DETECT-010 未上线信号返回 not_measured，前端不得渲染为 是/否/0\nBR-DETECT-008 不同检测条件不得呈现为同口径趋势\n",
+      "description": "BR-DETECT-006 五信号并列返回，每个带 value + ruleVersion + reasonCode\nBR-DETECT-007 正式 indexed 必须带 subject_scope=url|question 与对象上下文；范围无法验证时只返回保护性文案 / GEO-42406，不进入正式聚合\nBR-DETECT-009 巡检与趋势按 subject_scope + subject_id + question + platform 分组，不跨 scope 混合\nBR-DETECT-010 未上线信号返回 not_measured，前端不得渲染为 是/否/0\nBR-DETECT-008 不同检测条件不得呈现为同口径趋势\n\n**回答正文的下钻入口（2026-10-02 补）**：本接口**不返回回答正文**，\n只给 `answerOssKey`（对象键）。正文要经\n`GET /run-reports/{runId}/results/{resultId}` 从 OSS 读出，而那个端点\n只认运行编号，因此每行**必须**带 `detectionRunId`（来自\n`geo_detection_attempt.detection_run_id`，nullable）。\n\n`detectionRunId` 为 null 表示该记录没有运行归属（历史遗留数据），\n前端据此**不发起下钻请求**并如实说明读不到，**不得**显示成「回答为空」——\n未取得与没有回答是两件事（`BR-DETECT-010`）。\n",
       "permission": "geo:detect:view",
       "idempotencyRule": null,
       "parameters": [

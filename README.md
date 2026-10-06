@@ -95,7 +95,7 @@ Image/video file upload uses the separate Resource/OSS path and is outside this 
 
 ## OpenAPI generation and tests
 
-`src/generated/openapi.catalog.json` and `../geo-workflow/references/capability-map.md` are generated from `../scrm-specs/30-contracts/08-openapi.yaml`. Current SHA-256: `0229313233b4ddd49823c09735c07ab5ab26b5befa5125b7a8a5a6635c93f965`.
+`src/generated/openapi.catalog.json` and `../geo-workflow/references/capability-map.md` are generated from `../scrm-specs/30-contracts/08-openapi.yaml`. The value is `catalog.source.sha256`, which is the hash of the **OpenAPI spec**, not of the catalog file. Current SHA-256: `6b7e1a2d785a7b337f4e0b967a64903981bc9e0574e9687580de874fa020a464`. Run `npm run validate` to detect a spec change the catalog has not absorbed yet.
 
 ```powershell
 npm ci --ignore-scripts

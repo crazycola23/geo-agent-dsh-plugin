@@ -70,11 +70,44 @@ export async function geoApprovalDecision(execution, next, apiCatalog = catalog)
   };
 }
 
+/**
+ * The DSH tool runtime snapshots a tool's return value as lossless JSON *before*
+ * rendering it (dsh-tools `snapshotToolValue`), and that snapshot rejects any own
+ * enumerable key whose value is `undefined`. An absent optional field must therefore
+ * be an omitted key, not an `undefined` value — otherwise the whole call fails before
+ * the operator or the model sees anything, with a message about JSON rather than
+ * about the GEO error that actually caused the field to be absent.
+ *
+ * The output contract has no normalize hook, so every tool goes through this wrapper:
+ * it drops absent-valued own keys recursively and leaves real values (null, false, 0,
+ * empty string) untouched.
+ */
+function defineGeoTool(definition) {
+  return defineTool({
+    ...definition,
+    output: jsonOutput(),
+    execute: async (...args) => stripUndefined(await definition.execute(...args)),
+  });
+}
+
 function jsonOutput() {
   return {
     schema: { type: 'json' },
     render: (_args, value) => [{ type: 'text', text: JSON.stringify(value, null, 2) }],
   };
+}
+
+/** Deep-copy a JSON-shaped value, omitting own keys whose value is `undefined`. */
+function stripUndefined(value) {
+  if (value === null || typeof value !== 'object') return value;
+  if (Array.isArray(value)) return value.map(stripUndefined);
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) return value;
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([, child]) => child !== undefined)
+      .map(([key, child]) => [key, stripUndefined(child)]),
+  );
 }
 
 export const name = '@geo-internal/geo-agent-dsh-plugin';
@@ -96,7 +129,7 @@ export function apply(ctx, config = {}) {
     getSettings: currentSettings,
   });
 
-  ctx.tools.register(defineTool({
+  ctx.tools.register(defineGeoTool({
     name: 'geo_api',
     description: 'Call one fixed GEO API operation from the generated OpenAPI allowlist. projectId selects that project’s directly configured GEO project API token; if the operation also carries projectId in path/query/body, it must match. Use geo_describe_operation first when you need exact request fields. Every non-GET request is shown to the operator for DSH approval before dispatch. Never repeat a call with unknown outcome until the matching GEO object or order has been checked.',
     parameters: {
@@ -107,7 +140,6 @@ export function apply(ctx, config = {}) {
       body: { type: 'json', description: 'Application/json request body matching the current canonical GEO OpenAPI schema.' },
       idempotencyKey: { type: 'string', description: 'Reuse the prior X-Idempotency-Key when recovering the same request. If omitted on an operation that declares this header, the plugin generates one and returns it.' },
     },
-    output: jsonOutput(),
     async execute(args, exec) {
       const settings = currentSettings();
       const selection = resolveProjectSelection(args.projectId, args);
@@ -117,13 +149,12 @@ export function apply(ctx, config = {}) {
     },
   }));
 
-  ctx.tools.register(defineTool({
+  ctx.tools.register(defineGeoTool({
     name: 'geo_describe_operation',
     description: 'Read the generated OpenAPI contract for one GEO operation, including exact path/query parameters, JSON request body shape, permission, idempotency rule, and whether a human approval is required.',
     parameters: {
       operation: { type: 'string', enum: operationNames, required: true, description: 'Exact operation name from the generated GEO OpenAPI catalog.' },
     },
-    output: jsonOutput(),
     async execute({ operation: operationName }) {
       const operation = catalog.operations[operationName];
       if (!operation) return { ok: false, error: 'Operation is not in the generated GEO OpenAPI allowlist' };
@@ -133,17 +164,16 @@ export function apply(ctx, config = {}) {
     },
   }));
 
-  ctx.tools.register(defineTool({
+  ctx.tools.register(defineGeoTool({
     name: 'geo_list_evidence_files',
     description: 'List only regular .doc, .docx, .pdf, and .txt files directly inside the operator-configured GEO evidence staging directory. Returns file names and byte sizes only; it never reads or returns file contents.',
     parameters: {},
-    output: jsonOutput(),
     async execute() {
       return listStagedEvidenceFiles(currentSettings().evidenceDirectory);
     },
   }));
 
-  ctx.tools.register(defineTool({
+  ctx.tools.register(defineGeoTool({
     name: 'geo_upload_evidence',
     description: 'Upload one named GEO evidence file from the operator-configured staging directory. Only a direct-child file with a .doc, .docx, .pdf, or .txt extension is accepted; absolute paths, traversal, and symbolic links are rejected. Uses the canonical multipart endpoint and a stable content-derived idempotency key. DSH asks the operator before upload.',
     parameters: {
@@ -152,20 +182,18 @@ export function apply(ctx, config = {}) {
       name: { type: 'string', description: 'Optional evidence display name, up to the canonical OpenAPI limit.' },
       idempotencyKey: { type: 'string', description: 'Optional UUID to reuse for recovery or an intentional new upload. By default a stable UUID is derived from project ID and file contents.' },
     },
-    output: jsonOutput(),
     async execute(args, exec) {
       const settings = currentSettings();
       return executeWithGeoProjectToken(auth, args.projectId, token => executeGeoEvidenceUpload({ catalog, args, evidenceDirectory: settings.evidenceDirectory, baseUrl: settings.baseUrl, basePath: settings.basePath, token, signal: exec.signal, timeoutMs: settings.timeoutMs }), settings);
     },
   }));
 
-  ctx.tools.register(defineTool({
+  ctx.tools.register(defineGeoTool({
     name: 'geo_connection_status',
     description: 'Validate one configured GEO project API token against GEO, and report the bound project, token name, scopes, and expiry without displaying the bearer.',
     parameters: {
       projectId: { type: 'string', required: true, description: 'Configured GEO project whose project API token should be tested.' },
     },
-    output: jsonOutput(),
     async execute({ projectId }) {
       const settings = currentSettings();
       const authStatus = await auth.status(projectId, settings);
