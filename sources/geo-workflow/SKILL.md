@@ -10,7 +10,7 @@ description: Run internal GEO operations through the authenticated DSH GEO tools
 ## 执行要求
 
 - 先确认项目和本次任务范围，再用只读工具检查当前状态。项目、客户、稿件、平台或报告范围不明确时，先问清楚，不凭名称猜 ID。
-- 只执行用户明确要求的步骤。用户说“跑完整流程”也不等于同意 AI 确认事实、发送检测、发布内容、确认费用或生成客户报告；逐一展示业务对象与影响，等用户明确答复后再发出对应请求。
+- 只执行用户明确要求的步骤。用户说“跑任务 / 开始跑单 / 继续运营 / 接手这个项目”时进入自动跑单模式（[auto-run.md](references/auto-run.md)）：产出运营决策单并逐项征求审批，批准一项才执行一项；即便如此，发布确认与资料上传仍单独确认。除此之外，用户说“跑完整流程”也不等于同意 AI 确认事实、发送检测、发布内容、确认费用或生成客户报告；逐一展示业务对象与影响，等用户明确答复后再发出对应请求。
 - 需要用户裁决、选择或补充信息时（事实候选逐项确认、发布目标与报价确认、检测发送、资料挑选、报告生成等），调用内置 `ask_user_question` 提交带候选项的问题：每个候选项写成一个 option（label 用业务叫法，description 说明影响与代价），推荐项放第一位并在 label 末尾加"(Recommended)"；不要用纯文本提问干等回复。收到答复后再执行对应写操作——DSH 的插件级审批（档位为 ask 的域）仍会逐次弹出，两者不互相替代。
 - 每次调用写接口前先查看当前契约；DSH 还会在每个非 GET 操作前询问操作员。拒绝或取消审批后停止该动作。
 - 文件只可通过 `geo_list_evidence_files` 选择，并用 `geo_upload_evidence` 上传到用户确认的项目。不要请求文件绝对路径，也不要把文件正文复制进对话。
@@ -21,5 +21,6 @@ description: Run internal GEO operations through the authenticated DSH GEO tools
 ## 参考
 
 - 全流程、业务确认点与首版边界：[workflow.md](references/workflow.md)
+- 自动跑单（OpsRun）触发、感知清单与决策单审批：[auto-run.md](references/auto-run.md)
 - DSH 隔离安装、凭据和运行：[setup.md](references/setup.md)
 - OpenAPI 与本 Skill 的维护办法：[maintenance.md](references/maintenance.md)
