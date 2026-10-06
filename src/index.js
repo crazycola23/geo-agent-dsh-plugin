@@ -87,6 +87,8 @@ export function apply(ctx, config = {}) {
   }
 
   const currentSettings = () => pluginSettings(config);
+  // The gateway prefix is a per-instance setting, not part of the OpenAPI contract,
+  // so it reaches both the API client and the token check through the settings snapshot.
   const auth = createGeoAuthProvider({
     credentials: ctx.credentials,
     tokenPrefix: catalog.projectApiTokenPolicy.tokenPrefix,
@@ -111,7 +113,7 @@ export function apply(ctx, config = {}) {
       const selection = resolveProjectSelection(args.projectId, args);
       if (!selection.ok) return { ok: false, outcome: 'rejected', error: selection.error };
       const { projectId: _authProjectId, ...requestArgs } = args;
-      return executeWithGeoProjectToken(auth, selection.projectId, token => executeGeoOperation({ catalog, operationName: args.operation, args: requestArgs, baseUrl: settings.baseUrl, token, signal: exec.signal, timeoutMs: settings.timeoutMs }), settings);
+      return executeWithGeoProjectToken(auth, selection.projectId, token => executeGeoOperation({ catalog, operationName: args.operation, args: requestArgs, baseUrl: settings.baseUrl, basePath: settings.basePath, token, signal: exec.signal, timeoutMs: settings.timeoutMs }), settings);
     },
   }));
 
@@ -153,7 +155,7 @@ export function apply(ctx, config = {}) {
     output: jsonOutput(),
     async execute(args, exec) {
       const settings = currentSettings();
-      return executeWithGeoProjectToken(auth, args.projectId, token => executeGeoEvidenceUpload({ catalog, args, evidenceDirectory: settings.evidenceDirectory, baseUrl: settings.baseUrl, token, signal: exec.signal, timeoutMs: settings.timeoutMs }), settings);
+      return executeWithGeoProjectToken(auth, args.projectId, token => executeGeoEvidenceUpload({ catalog, args, evidenceDirectory: settings.evidenceDirectory, baseUrl: settings.baseUrl, basePath: settings.basePath, token, signal: exec.signal, timeoutMs: settings.timeoutMs }), settings);
     },
   }));
 

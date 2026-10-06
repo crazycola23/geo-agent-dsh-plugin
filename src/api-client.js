@@ -136,20 +136,38 @@ export function resolveApiOrigin(baseUrl) {
   return url.origin;
 }
 
+/**
+ * Normalize the optional gateway prefix. Only a plain absolute path is accepted so a
+ * configured value can never turn into a different origin, an authority override, or a
+ * protocol-relative hop that would leak the bearer to another host.
+ */
+export function normalizeBasePath(basePath) {
+  if (typeof basePath !== 'string') return '';
+  const trimmed = basePath.trim();
+  if (trimmed === '' || trimmed === '/') return '';
+  if (!trimmed.startsWith('/')) throw new Error('GEO_API_BASE_PATH must be an absolute path such as /prod-api');
+  if (trimmed.includes('//') || trimmed.includes('\\') || trimmed.includes('?') || trimmed.includes('#')) {
+    throw new Error('GEO_API_BASE_PATH must be a single path prefix without query, fragment, or backslash');
+  }
+  return trimmed.replace(/\/+$/, '');
+}
+
 function encodeQueryValue(value) {
   if (value === null) return '';
   if (typeof value === 'object') return JSON.stringify(value);
   return String(value);
 }
 
-function buildUrl(operation, args, origin, serverPath) {
+function buildUrl(operation, args, origin, serverPath, basePath = '') {
   const pathParams = args.pathParams ?? {};
   let route = operation.path.replace(/\{([^}]+)\}/g, (_whole, name) => {
     if (!Object.hasOwn(pathParams, name)) throw new Error(`pathParams.${name} is required`);
     return encodeURIComponent(String(pathParams[name]));
   });
   if (/[{}]/.test(route)) throw new Error('Path parameters were not fully resolved');
-  route = `${serverPath.replace(/\/$/, '')}${route}`;
+  // basePath + serverPath, both optional halves. `new URL(route, origin)` keeps any
+  // leading slash in the path, so the prefix survives instead of being dropped.
+  route = `${basePath}${serverPath.replace(/\/$/, '')}${route}`;
   const url = new URL(route, `${origin}/`);
   const definitions = new Map(operation.parameters.filter(param => param.in === 'query').map(param => [param.name, param]));
   for (const [key, value] of Object.entries(args.query ?? {})) {
@@ -222,7 +240,7 @@ function requestTimeoutSignal(signal, timeoutMs) {
   return signal ? AbortSignal.any([signal, timeout]) : timeout;
 }
 
-export async function executeGeoOperation({ catalog, operationName, args, baseUrl, token, signal, fetchImpl = fetch, timeoutMs = 30_000 }) {
+export async function executeGeoOperation({ catalog, operationName, args, baseUrl, basePath = '', token, signal, fetchImpl = fetch, timeoutMs = 30_000 }) {
   const operation = catalog.operations[operationName];
   if (!operation) return { ok: false, outcome: 'rejected', error: `Operation '${operationName}' is not in the generated OpenAPI allowlist` };
   if (operation.requestBody?.contentType && operation.requestBody.contentType !== 'application/json') {
@@ -243,6 +261,9 @@ export async function executeGeoOperation({ catalog, operationName, args, baseUr
   let origin;
   try { origin = resolveApiOrigin(baseUrl); }
   catch (error) { return { ok: false, outcome: 'rejected', error: error.message }; }
+  let gatewayPrefix;
+  try { gatewayPrefix = normalizeBasePath(basePath); }
+  catch (error) { return { ok: false, outcome: 'rejected', error: error.message }; }
 
   const headers = new Headers({
     Accept: 'application/json',
@@ -259,7 +280,7 @@ export async function executeGeoOperation({ catalog, operationName, args, baseUr
     request.body = body;
   }
 
-  const url = buildUrl(operation, normalizedArgs, origin, catalog.serverPath);
+  const url = buildUrl(operation, normalizedArgs, origin, catalog.serverPath, gatewayPrefix);
   let response;
   try {
     response = await fetchImpl(url, request);
@@ -351,7 +372,7 @@ export async function executeGeoOperation({ catalog, operationName, args, baseUr
   return result;
 }
 
-export async function executeGeoEvidenceUpload({ catalog, args, evidenceDirectory, baseUrl, token, signal, fetchImpl = fetch, timeoutMs = 30_000 }) {
+export async function executeGeoEvidenceUpload({ catalog, args, evidenceDirectory, baseUrl, basePath = '', token, signal, fetchImpl = fetch, timeoutMs = 30_000 }) {
   const operation = catalog.operations.post_evidence_sources_upload;
   if (!operation || operation.method !== 'POST' || operation.path !== '/evidence-sources/upload'
       || operation.requestBody?.contentType !== 'multipart/form-data') {
@@ -384,6 +405,9 @@ export async function executeGeoEvidenceUpload({ catalog, args, evidenceDirector
   let origin;
   try { origin = resolveApiOrigin(baseUrl); }
   catch (error) { return { ok: false, outcome: 'rejected', error: error.message }; }
+  let gatewayPrefix;
+  try { gatewayPrefix = normalizeBasePath(basePath); }
+  catch (error) { return { ok: false, outcome: 'rejected', error: error.message }; }
 
   let opened;
   try { opened = await openStagedEvidence(evidenceDirectory, args.fileName); }
@@ -410,7 +434,7 @@ export async function executeGeoEvidenceUpload({ catalog, args, evidenceDirector
     [idemParam.name]: idempotencyKey,
     'Content-Type': `multipart/form-data; boundary=${boundary}`,
   });
-  const url = new URL(`${catalog.serverPath.replace(/\/$/, '')}${operation.path}`, `${origin}/`);
+  const url = new URL(`${gatewayPrefix}${catalog.serverPath.replace(/\/$/, '')}${operation.path}`, `${origin}/`);
   const request = {
     method: operation.method,
     headers,

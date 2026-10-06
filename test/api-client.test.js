@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { executeGeoOperation, resolveApiOrigin } from '../src/api-client.js';
+import { executeGeoOperation, normalizeBasePath, resolveApiOrigin } from '../src/api-client.js';
 
 function testCatalog() {
   return {
@@ -53,6 +53,77 @@ test('write request uses fixed GEO route, authenticated operator token, and one 
   assert.equal(result.idempotencyKey, 'request-key-1');
   assert.equal(result.data.apiKey, '[redacted]');
   assert.equal(JSON.stringify(result).includes('secret-token-value'), false);
+});
+
+test('gateway base path is inserted between origin and the OpenAPI server path', async () => {
+  let captured;
+  const result = await executeGeoOperation({
+    catalog: testCatalog(),
+    operationName: 'get_projects_by_projectid',
+    args: { pathParams: { projectId: 42 } },
+    baseUrl: 'https://geo.dev.example',
+    basePath: '/prod-api',
+    token: 'secret-token-value',
+    fetchImpl: async (url, init) => {
+      captured = { url: String(url), method: init.method };
+      return new Response(JSON.stringify({ code: 200, msg: 'ok', data: { id: 42 } }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    },
+  });
+  assert.equal(captured.url, 'https://geo.dev.example/prod-api/geo/projects/42');
+  assert.equal(result.outcome, 'complete');
+});
+
+test('an empty base path keeps the direct deployment shape', async () => {
+  let captured;
+  await executeGeoOperation({
+    catalog: testCatalog(),
+    operationName: 'get_projects_by_projectid',
+    args: { pathParams: { projectId: 7 } },
+    baseUrl: 'https://geo.dev.example',
+    basePath: '',
+    token: 'secret-token-value',
+    fetchImpl: async (url) => {
+      captured = String(url);
+      return new Response(JSON.stringify({ code: 200, msg: 'ok', data: {} }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    },
+  });
+  assert.equal(captured, 'https://geo.dev.example/geo/projects/7');
+});
+
+test('a base path can never redirect the bearer to another origin or add query text', () => {
+  assert.equal(normalizeBasePath(''), '');
+  assert.equal(normalizeBasePath('/'), '');
+  assert.equal(normalizeBasePath('/prod-api'), '/prod-api');
+  assert.equal(normalizeBasePath('/prod-api/'), '/prod-api');
+  assert.equal(normalizeBasePath('  /prod-api  '), '/prod-api');
+  // Relative, authority-carrying and query-bearing values are rejected outright:
+  // each of these would move the request somewhere the settings card never validated.
+  assert.throws(() => normalizeBasePath('prod-api'), /absolute path/);
+  assert.throws(() => normalizeBasePath('//evil.example'), /single path prefix/);
+  assert.throws(() => normalizeBasePath('/prod-api\\x'), /single path prefix/);
+  assert.throws(() => normalizeBasePath('/prod-api?a=1'), /single path prefix/);
+  assert.throws(() => normalizeBasePath('/prod-api#f'), /single path prefix/);
+});
+
+test('a rejected base path is refused before any network dispatch', async () => {
+  let calls = 0;
+  const result = await executeGeoOperation({
+    catalog: testCatalog(),
+    operationName: 'get_projects_by_projectid',
+    args: { pathParams: { projectId: 42 } },
+    baseUrl: 'https://geo.dev.example',
+    basePath: '//evil.example',
+    token: 'secret-token-value',
+    fetchImpl: async () => { calls += 1; throw new Error('must not be called'); },
+  });
+  assert.equal(result.outcome, 'rejected');
+  assert.equal(calls, 0);
 });
 
 test('model-supplied arbitrary host and invalid request body are rejected before network dispatch', async () => {

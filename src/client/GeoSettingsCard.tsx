@@ -12,7 +12,7 @@ type CredentialRemote = {
 }
 type ProjectSettings = { projectId: string; name?: string }
 type ProjectDraft = ProjectSettings & { draftKey: string; apiToken: string; persisted: boolean }
-type SettingsValue = { apiBaseUrl?: string; evidenceDirectory?: string; timeoutMs?: number; projects?: ProjectSettings[]; restrictTools?: boolean }
+type SettingsValue = { apiBaseUrl?: string; apiBasePath?: string; evidenceDirectory?: string; timeoutMs?: number; projects?: ProjectSettings[]; restrictTools?: boolean }
 type ScopeSnapshot = { value?: SettingsValue; writable?: boolean }
 type FormScope = {
   getSnapshot(): ScopeSnapshot
@@ -25,6 +25,16 @@ export interface GeoSettingsCardProps {
   useSnapshot: () => ScopeSnapshot
   t: (key: keyof typeof en) => string
   credentials?: CredentialRemote
+}
+
+function normalizeBasePathInput(input: string): string {
+  const value = input.trim()
+  if (value === '' || value === '/') return ''
+  if (!value.startsWith('/')) throw new Error('网关路径前缀要以 / 开头，例如 /prod-api。')
+  if (value.includes('//') || value.includes('\\') || value.includes('?') || value.includes('#')) {
+    throw new Error('网关路径前缀只能是一段路径，不要带查询参数、片段或反斜杠。')
+  }
+  return value.replace(/\/+$/, '')
 }
 
 function normalizeOrigin(input: string): string {
@@ -129,6 +139,7 @@ export function GeoSettingsCard(props: GeoSettingsCardProps): ReactNode {
   const value = snapshot.value ?? {}
   const [expanded, setExpanded] = useState(true)
   const [apiBaseUrl, setApiBaseUrl] = useState(value.apiBaseUrl ?? '')
+  const [apiBasePath, setApiBasePath] = useState(value.apiBasePath ?? '')
   const [evidenceDirectory, setEvidenceDirectory] = useState(value.evidenceDirectory ?? '')
   const [timeoutSeconds, setTimeoutSeconds] = useState(String(Math.round((value.timeoutMs ?? 30_000) / 1_000)))
   const [projects, setProjects] = useState(() => draftsFrom(value.projects))
@@ -147,10 +158,11 @@ export function GeoSettingsCard(props: GeoSettingsCardProps): ReactNode {
   useEffect(() => {
     if (dirty) return
     setApiBaseUrl(value.apiBaseUrl ?? '')
+    setApiBasePath(value.apiBasePath ?? '')
     setEvidenceDirectory(value.evidenceDirectory ?? '')
     setTimeoutSeconds(String(Math.round((value.timeoutMs ?? 30_000) / 1_000)))
     setProjects(draftsFrom(value.projects))
-  }, [dirty, value.apiBaseUrl, value.evidenceDirectory, value.timeoutMs, value.projects])
+  }, [dirty, value.apiBaseUrl, value.apiBasePath, value.evidenceDirectory, value.timeoutMs, value.projects])
 
   const refsInUse = projects.flatMap(project => validProjectId(project.projectId)
     ? Object.values(credentialRefs(project.projectId.trim()))
@@ -227,8 +239,10 @@ export function GeoSettingsCard(props: GeoSettingsCardProps): ReactNode {
       return
     }
     let origin: string
+    let gatewayPrefix: string
     try {
       origin = normalizeOrigin(apiBaseUrl)
+      gatewayPrefix = normalizeBasePathInput(apiBasePath)
     } catch (error) {
       setFailure(errorMessage(error))
       return
@@ -286,6 +300,7 @@ export function GeoSettingsCard(props: GeoSettingsCardProps): ReactNode {
       }
       credentialWritesComplete = true
       await scope.set('apiBaseUrl', origin)
+      await scope.set('apiBasePath', gatewayPrefix)
       await scope.set('evidenceDirectory', evidenceDirectory.trim())
       await scope.set('timeoutMs', seconds * 1_000)
       await scope.set('projects', normalizedProjects)
@@ -312,6 +327,7 @@ export function GeoSettingsCard(props: GeoSettingsCardProps): ReactNode {
       })))
       setEvidenceDirectory(evidenceDirectory.trim())
       setApiBaseUrl(origin)
+      setApiBasePath(gatewayPrefix)
       setRemovedProjectIds([])
       setDirty(false)
       setSaved(true)
@@ -399,6 +415,17 @@ export function GeoSettingsCard(props: GeoSettingsCardProps): ReactNode {
                 disabled={busy || !snapshot.writable}
                 onChange={(next) => { markDirty(); setEvidenceDirectory(next) }}
               />
+              <Field
+                label="网关路径前缀"
+                hint="没有就留空；例如 /prod-api。"
+                value={apiBasePath}
+                placeholder="/prod-api"
+                testId="geo-api-base-path"
+                disabled={busy || !snapshot.writable}
+                onChange={(next) => { markDirty(); setApiBasePath(next) }}
+              />
+            </div>
+            <div className={styles.twoColumns}>
               <Field
                 label="请求超时（秒）"
                 type="number"

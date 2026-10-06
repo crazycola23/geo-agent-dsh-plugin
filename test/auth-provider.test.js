@@ -146,6 +146,42 @@ test('connection status never returns a rejected bearer', async () => {
   assert.doesNotMatch(JSON.stringify(status), new RegExp(token));
 });
 
+test('token validation goes through the same gateway prefix as business calls', async () => {
+  const values = new Map();
+  setProjectToken(values, '101', tokenFor('prefixed-project-token'));
+  const requests = [];
+  const provider = createGeoAuthProvider({
+    credentials: credentialStore(values),
+    getSettings: () => ({ ...projectSettings('101'), basePath: '/prod-api' }),
+    fetchImpl: async (url) => {
+      requests.push(new URL(url));
+      return contextResponse('101');
+    },
+  });
+
+  const status = await provider.status('101');
+  assert.equal(status.authenticated, true);
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].pathname, '/prod-api/geo/auth/project-token-context');
+  assert.equal(requests[0].origin, 'https://geo.example');
+});
+
+test('an unusable gateway prefix stops the token check before dispatch', async () => {
+  let calls = 0;
+  const values = new Map();
+  setProjectToken(values, '101', tokenFor('prefixed-project-token'));
+  const provider = createGeoAuthProvider({
+    credentials: credentialStore(values),
+    getSettings: () => ({ ...projectSettings('101'), basePath: '//evil.example' }),
+    fetchImpl: async () => { calls += 1; return contextResponse('101'); },
+  });
+
+  const status = await provider.status('101');
+  assert.equal(status.authenticated, false);
+  assert.match(status.error, /single path prefix/);
+  assert.equal(calls, 0);
+});
+
 test('business 401 is returned once and never retried', async () => {
   let businessCalls = 0;
   const token = tokenFor('one-shot-project-token');

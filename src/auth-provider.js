@@ -1,5 +1,5 @@
 import { credentialRef } from '@deepseek-ai/dsh-credentials';
-import { resolveApiOrigin } from './api-client.js';
+import { normalizeBasePath, resolveApiOrigin } from './api-client.js';
 import { normalizeProjectId, projectCredentialRefs } from './project-context.js';
 
 const maxAuthResponseBytes = 32 * 1024;
@@ -61,7 +61,7 @@ export function createGeoAuthProvider({
   getSettings,
   fetchImpl = fetch,
 }) {
-  const resolveSettings = settings => settings ?? getSettings?.() ?? { baseUrl, timeoutMs, projects };
+  const resolveSettings = settings => settings ?? getSettings?.() ?? { baseUrl, basePath: '', timeoutMs, projects };
 
   async function resolveToken(projectId) {
     if (typeof credentials?.resolve !== 'function') return undefined;
@@ -85,7 +85,8 @@ export function createGeoAuthProvider({
     if (url.protocol !== 'https:' && !['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)) {
       throw new Error('GEO 项目令牌要求使用 HTTPS；内网 IP 地址也必须配置 HTTPS。');
     }
-    const servicePath = `${String(serverPath || '/geo').replace(/\/$/, '')}/auth/project-token-context`;
+    // Same prefix the API calls use — the token check is a gateway route too.
+    const servicePath = `${normalizeBasePath(settings?.basePath)}${String(serverPath || '/geo').replace(/\/$/, '')}/auth/project-token-context`;
     return { origin, url: new URL(servicePath, `${origin}/`) };
   }
 
