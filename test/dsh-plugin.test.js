@@ -186,8 +186,8 @@ test('plugin registers the generated API surface and restricts each agent to GEO
   assert.equal(warnings.length, 1);
   assert.match(warnings[0], /tool isolation is active/);
   assert.match(warnings[0], /restrictTools/);
-  assert.deepEqual(registered.map(tool => tool.name), ['geo_api', 'geo_describe_operation', 'geo_list_evidence_files', 'geo_upload_evidence', 'geo_connection_status']);
-  const expectedRestriction = { allow: ['geo_api', 'geo_describe_operation', 'geo_list_evidence_files', 'geo_upload_evidence', 'geo_connection_status', 'ask_user_question'] };
+  assert.deepEqual(registered.map(tool => tool.name), ['geo_api', 'geo_describe_operation', 'geo_list_evidence_files', 'geo_upload_evidence', 'geo_connection_status', 'geo_approval_policy']);
+  const expectedRestriction = { allow: ['geo_api', 'geo_describe_operation', 'geo_list_evidence_files', 'geo_upload_evidence', 'geo_connection_status', 'geo_approval_policy', 'ask_user_question'] };
   assert.deepEqual(existing.state.restriction, expectedRestriction);
   assert.equal(events.has('tools/pre-execute'), true);
   assert.equal(events.has('agent/created'), true);
@@ -247,7 +247,7 @@ test('restrictTools false keeps the GEO tools but never restricts an agent', () 
   // No isolation means no isolation notice.
   assert.equal(warnings.length, 0);
   // The tool surface is identical to the isolating configuration …
-  assert.deepEqual(registered.map(tool => tool.name), ['geo_api', 'geo_describe_operation', 'geo_list_evidence_files', 'geo_upload_evidence', 'geo_connection_status']);
+  assert.deepEqual(registered.map(tool => tool.name), ['geo_api', 'geo_describe_operation', 'geo_list_evidence_files', 'geo_upload_evidence', 'geo_connection_status', 'geo_approval_policy']);
   // … but nothing is masked, for the existing agent or any later one.
   assert.equal(state.restriction, undefined);
   events.get('agent/created')({ agent: makeAgent() });

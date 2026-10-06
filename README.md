@@ -58,7 +58,7 @@ dsh plugin --profile <profile> add github:crazycola23/geo-agent-dsh-plugin
 
 卡片里的「运行隔离」决定这个 DSH 实例给 Agent 看多少工具：
 
-- **开**：只暴露本插件的 GEO 工具（外加内置 `ask_user_question`，供 agent 向人提问），终端、文件、浏览器等一律不可见 —— 适合把 GEO 令牌与通用工具隔开
+- **开**：只暴露本插件的 GEO 工具（含只读的 `geo_approval_policy`，外加内置 `ask_user_question`，供 agent 向人提问），终端、文件、浏览器等一律不可见 —— 适合把 GEO 令牌与通用工具隔开
 - **关**：GEO 工具与其它工具同时可用（方便，但令牌与通用工具处在同一环境）
 
 切换后写入即时生效：volatile 配置没有变更事件，插件用 2 秒一次的轻量签名轮询把切换收敛到已存在的 Agent；若工具列表仍没有变化，**完全退出 DSH 再启动**一定生效。
@@ -85,6 +85,7 @@ Install this package in an isolated DSH profile, then fill in the GEO service ad
 
 - `geo_api`: call one exact operation from the generated GEO OpenAPI catalog. Supply the target `projectId`; the plugin uses that project's API token and rejects requests whose path/query/body project ID differs. The selector is not added to the business request. The plugin validates path/query/body fields and refuses arbitrary hosts, headers, or undeclared fields.
 - `geo_describe_operation`: inspect the current generated method, route, request schema, permission, and idempotency rule.
+- `geo_approval_policy`: read this plugin approval configuration (no network call) — per-domain write policy (ask = DSH approval per write, agent = agent judgment), the operations each domain covers, writes that always require approval (publish confirm-class, evidence upload), always-allowed query POSTs, and tool isolation state. Changing policies happens in the settings card, never through tools.
 - `geo_list_evidence_files`: list allowed evidence file names and sizes from the configured staging folder; it never reads or returns their contents.
 - `geo_upload_evidence`: upload one direct-child `.doc`, `.docx`, `.pdf`, or `.txt` file to the canonical multipart route. Absolute paths, traversal, symbolic links, and unsupported extensions are rejected.
 - `geo_connection_status`: test one selected project's API token and report its bound project, token name, scopes and expiry without revealing the bearer.

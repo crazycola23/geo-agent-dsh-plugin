@@ -15,7 +15,7 @@ const catalog = JSON.parse(readFileSync(resolve(here, 'generated', 'openapi.cata
 const operationNames = Object.keys(catalog.operations).sort();
 // ask_user_question 是 DSH 核心内置工具；列入白名单是为了 restrictTools
 // 隔离打开时它不被一起屏蔽——agent 向人提问（带候选项）依赖它。
-const toolNames = ['geo_api', 'geo_describe_operation', 'geo_list_evidence_files', 'geo_upload_evidence', 'geo_connection_status', 'ask_user_question'];
+const toolNames = ['geo_api', 'geo_describe_operation', 'geo_list_evidence_files', 'geo_upload_evidence', 'geo_connection_status', 'geo_approval_policy', 'ask_user_question'];
 // Write-delegation domains. Each key maps to one settings policy (`ask` keeps
 // the operator prompt, the explicit 'agent' value delegates the domain's
 // writes to the running agent's judgment). Default-deny for automation: an
@@ -282,6 +282,7 @@ export function apply(ctx, config = {}) {
     },
   }));
 
+
   ctx.tools.register(defineGeoTool({
     name: 'geo_connection_status',
     description: 'Validate one configured GEO project API token against GEO, and report the bound project, token name, scopes, and expiry without displaying the bearer.',
@@ -306,6 +307,29 @@ export function apply(ctx, config = {}) {
         tokenValueExposed: false,
         operationCount: operationNames.length,
         catalogDigest: catalog.source.sha256,
+      };
+    },
+  }));
+
+  ctx.tools.register(defineGeoTool({
+    name: 'geo_approval_policy',
+    description: 'Read this plugin approval configuration (no network call): per-domain write policy — ask means every write in the domain shows a DSH operator approval before dispatch, agent means the agent executes writes in the domain by its own judgment — plus the exact operations each domain covers, writes that always require approval regardless of policy (publish confirm-class, evidence upload), query-shaped POSTs that always pass, and tool isolation state. Read it before OpsRun EXECUTE so the decision sheet can annotate which approved items will still prompt.',
+    parameters: {},
+    async execute() {
+      const settings = currentSettings();
+      const policy = key => (settings[key] === 'agent' ? 'agent' : 'ask');
+      return {
+        policies: Object.fromEntries(Object.keys(POLICY_DOMAINS).map(key => [key, policy(key)])),
+        domains: Object.entries(POLICY_DOMAINS).map(([key, operations]) => ({
+          key,
+          policy: policy(key),
+          operations: [...operations].sort(),
+        })),
+        hardAskAlways: [...HARD_ASK_WRITES].sort(),
+        evidenceUpload: 'geo_upload_evidence always requires explicit operator approval before dispatch',
+        alwaysAllowedQueryPosts: [...SIDE_EFFECT_FREE_WRITES].sort(),
+        restrictTools: settings.restrictTools !== false,
+        note: 'ask = DSH approval per write; agent = agent judgment; any other configured value falls back to ask. Changing policies happens in the GEO 工作台 settings card (运行 tab), never through tools.',
       };
     },
   }));
