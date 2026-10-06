@@ -13,6 +13,8 @@
 
 全部只读，操作名以 [capability-map.md](capability-map.md) 为准；每一步失败或无权限就记录为 openIssue，不中断整体感知。
 
+**响应形状约定（2026-10-06 实测）**：分页列表返回**顶格** `rows` / `total`（TableDataInfo），不在 `data` 里；非分页返回 `{code,msg,data}`。`get_facts_ai_extract_latest` 必传 `evidenceSourceIds`（**复数**字段名，逗号分隔的资料 id）。业务校验错误统一 `HTTP 400 + bizCode=GEO-40001 + details.field`，可直接用于自诊修正参数。
+
 1. 项目档案与预算：项目档案（含启动状态）、平台列表、项目预算与费用余量；
 2. 资料：资料列表与解析状态（`get_evidence_sources`）；
 3. 事实：事实库数量、已批准/存疑/停用分布；
@@ -45,7 +47,9 @@
 
 资料 → 事实 → 问题 → 内容 → 发布 → 检测 → 报告；只有前序依赖就绪才发起后序（例：已批准事实不足时不发起内容生成，改为在 VERIFY 里说明）。
 
-- 资料上传：列出候选文件请操作者挑选，挑选结果即上传清单，逐个走 `geo_upload_evidence`（DSH 审批照常）；
+- 资料上传：列出候选文件请操作者挑选，挑选结果即上传清单，逐个走 `geo_upload_evidence`（multipart 字段 `projectId`/`name`/`file`，X-Idempotency-Key 必带；小文件通常即时 PARSED）；
+- **事实确认是两段式（2026-10-06 实测）**：先 `post_facts_ai_extract/{runId}/candidates/{candidateId}/confirm`（body 必填 `scope`、`publicBoundary`，产生 `pending_confirm` 的修订），再 `post_fact_revisions/{id}/confirm`（body 必填 CAS `version`）——两步都完成才算已确认事实，两步都在 factConfirmPolicy 域；
+- **问题启用**：`post_questions_by_id_transition` 到 `enabled` 必须带 `targetPlatformIds`（至少一个，来自 `get_platforms`）和 CAS `version`；只有 `enabled` 的问题能进生成任务，否则报 GEO-40001「只能选择已启用的问题」；
 - 执行中以 `geo_approval_policy` 读到的档位为准：`agent` 域的操作直接派发；`ask` 域的操作派发时会弹 DSH 审批，操作员拒绝即停该项并记入 VERIFY；
 - 每个 executed 项完成后在对话中记一行结果（对象 + 记录号）；`outcome=unknown` 按 workflow.md 幂等规则查证，不重投；
 - 任一依赖项失败：后续依赖项标记 blocked 并在 VERIFY 报告，不擅自改道。
