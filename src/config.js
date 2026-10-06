@@ -27,6 +27,14 @@ export const Config = Schema.object({
   // masks every unrelated tool. Set false in the profile's cordis.patch.yml to
   // keep the GEO tools without the restriction. See setup.md.
   restrictTools: Schema.boolean().default(true).volatile(),
+  // Fact-lifecycle write gate. 'ask' (default) keeps the interactive flow: the
+  // agent presents each fact candidate and waits for the operator's per-item
+  // decision. 'agent' is an explicit operator opt-in that lets the running
+  // agent apply its own judgment on fact-lifecycle writes (new revisions,
+  // confirm, disable, dispute, reenable) without the plugin-level approval
+  // prompt. It never covers evidence uploads or publish / detect / report
+  // writes, and it does not change GEO's own server-side authorization.
+  factConfirmPolicy: Schema.string().default('ask').volatile(),
   projects: Schema.array(Schema.object({
     projectId: Schema.string(),
     name: Schema.string().default(''),
@@ -59,6 +67,9 @@ export function pluginSettings(config = {}, env = process.env) {
       ? timeout
       : defaultTimeout,
     restrictTools: configuredRestrictTools === undefined ? true : Boolean(configuredRestrictTools),
+    // Anything other than the explicit opt-in value falls back to the safe
+    // interactive default instead of failing startup or widening the gate.
+    factConfirmPolicy: currentValue(config.factConfirmPolicy) === 'agent' ? 'agent' : 'ask',
     projects: Array.isArray(configuredProjects) ? configuredProjects.map(project => ({
       projectId: typeof project?.projectId === 'string' ? project.projectId.trim() : '',
       name: typeof project?.name === 'string' ? project.name.trim() : '',

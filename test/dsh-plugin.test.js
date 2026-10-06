@@ -57,6 +57,39 @@ test('GEO evidence upload is an explicit approved tool and cannot use the generi
   assert.match(upload.displayReason.zh_CN, /报价单\.pdf/);
 });
 
+test('the factConfirmPolicy opt-in delegates fact-lifecycle writes to the agent, nothing else', async () => {
+  const settings = { factConfirmPolicy: 'agent' };
+  const next = async () => ({ kind: 'allow' });
+
+  const confirm = await geoApprovalDecision({
+    name: 'geo_api',
+    arguments: { operation: 'post_fact_revisions_by_id_confirm', projectId: '101', pathParams: { id: '42' }, body: { version: 0 } },
+  }, next, catalog, settings);
+  assert.equal(confirm.kind, 'allow');
+
+  // The policy is scoped to the fact lifecycle; every other write keeps its prompt.
+  for (const operation of ['post_facts_ai_extract', 'post_content_generation_tasks', 'post_publish_records_confirm', 'post_detection_runs', 'post_detection_plans']) {
+    const stillAsk = await geoApprovalDecision({
+      name: 'geo_api',
+      arguments: { operation, projectId: '101', body: { projectId: 101 } },
+    }, next, catalog, settings);
+    assert.equal(stillAsk.kind, 'ask', operation);
+  }
+
+  const upload = await geoApprovalDecision({
+    name: 'geo_upload_evidence',
+    arguments: { projectId: '101', fileName: '报价单.pdf' },
+  }, next, catalog, settings);
+  assert.equal(upload.kind, 'ask');
+
+  // Default settings keep the interactive prompt for the very same fact write.
+  const defaultAsk = await geoApprovalDecision({
+    name: 'geo_api',
+    arguments: { operation: 'post_fact_revisions_by_id_confirm', projectId: '101', pathParams: { id: '42' }, body: { version: 0 } },
+  }, next);
+  assert.equal(defaultAsk.kind, 'ask');
+});
+
 test('plugin registers the generated API surface and restricts each agent to GEO tools', async () => {
   const registered = [];
   const events = new Map();

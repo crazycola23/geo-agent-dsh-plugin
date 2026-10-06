@@ -12,6 +12,16 @@ const here = dirname(fileURLToPath(import.meta.url));
 const catalog = JSON.parse(readFileSync(resolve(here, 'generated', 'openapi.catalog.json'), 'utf8'));
 const operationNames = Object.keys(catalog.operations).sort();
 const toolNames = ['geo_api', 'geo_describe_operation', 'geo_list_evidence_files', 'geo_upload_evidence', 'geo_connection_status'];
+// Fact-lifecycle writes covered by the factConfirmPolicy opt-in. Deliberately
+// narrow: extraction, content generation, publishing, detection, reports and
+// evidence uploads always keep their operator prompt regardless of the policy.
+const FACT_LIFECYCLE_WRITES = new Set([
+  'post_fact_revisions',
+  'post_fact_revisions_by_id_confirm',
+  'post_fact_revisions_by_id_disable',
+  'post_fact_revisions_by_id_dispute',
+  'post_fact_revisions_by_id_reenable',
+]);
 
 function safeApprovalValue(value, fallback) {
   const normalized = String(value ?? fallback).replace(/[\u0000-\u001f\u007f\u2028\u2029]/g, ' ').slice(0, 255);
@@ -41,7 +51,7 @@ function approvalArgumentSummary(args) {
   return JSON.stringify(summary).slice(0, 1_200);
 }
 
-export async function geoApprovalDecision(execution, next, apiCatalog = catalog) {
+export async function geoApprovalDecision(execution, next, apiCatalog = catalog, settings = {}) {
   if (execution.name === 'geo_upload_evidence') {
     const args = execution.arguments || {};
     const projectId = safeApprovalValue(args.projectId, '未指定');
@@ -61,6 +71,11 @@ export async function geoApprovalDecision(execution, next, apiCatalog = catalog)
     return { kind: 'deny', reason: 'Use the dedicated constrained tool for this non-JSON GEO operation' };
   }
   if (!isWriteOperation(apiCatalog, operationName)) return next();
+  // Operator opt-in: fact-lifecycle writes are delegated to the agent's own
+  // judgment. Scoped to the exact operation set above; every other write still
+  // asks, and the live settings snapshot makes the switch take effect without
+  // a restart.
+  if (settings?.factConfirmPolicy === 'agent' && FACT_LIFECYCLE_WRITES.has(operationName)) return next();
   const actionSummary = approvalArgumentSummary(execution.arguments);
   const prompt = `请审批 GEO 写操作 ${operation.method} ${operation.path}（${operation.summary}）。关键参数：${actionSummary}。服务端仍会校验权限。`;
   return {
@@ -216,7 +231,7 @@ export function apply(ctx, config = {}) {
     },
   }));
 
-  ctx.on('tools/pre-execute', (execution, next) => geoApprovalDecision(execution, next, catalog));
+  ctx.on('tools/pre-execute', (execution, next) => geoApprovalDecision(execution, next, catalog, currentSettings()));
 
   // Tool-level isolation. Restrict each current and future agent in its own scope
   // — a global restriction would also mask tools for unrelated agents in a shared

@@ -6,7 +6,7 @@ import { normalizeBasePath } from '../src/api-client.js';
 test('DSH configuration schema exposes live endpoint, evidence directory, and timeout fields', () => {
   const schema = Config.toJSON();
   const objectNode = schema.refs[String(schema.uid)];
-  assert.deepEqual(Object.keys(objectNode.dict).sort(), ['apiBasePath', 'apiBaseUrl', 'evidenceDirectory', 'projects', 'restrictTools', 'timeoutMs']);
+  assert.deepEqual(Object.keys(objectNode.dict).sort(), ['apiBasePath', 'apiBaseUrl', 'evidenceDirectory', 'factConfirmPolicy', 'projects', 'restrictTools', 'timeoutMs']);
   for (const field of Object.values(objectNode.dict)) {
     assert.equal(schema.refs[String(field)].meta.volatile, true);
   }
@@ -27,6 +27,7 @@ test('settings resolve live DSH values and retain environment fallbacks', () => 
     evidenceDirectory: 'D:\\geo-evidence',
     timeoutMs: 45_000,
     restrictTools: true,
+    factConfirmPolicy: 'ask',
     projects: [{ projectId: '101', name: '品牌 A' }, { projectId: '202', name: '' }],
   });
   baseUrl = '';
@@ -37,6 +38,7 @@ test('settings resolve live DSH values and retain environment fallbacks', () => 
     evidenceDirectory: 'D:\\staging',
     timeoutMs: 30_000,
     restrictTools: true,
+    factConfirmPolicy: 'ask',
     projects: [],
   });
 });
@@ -66,4 +68,15 @@ test('tool isolation defaults to on and can be turned off per profile', () => {
   assert.equal(pluginSettings(new Config({ restrictTools: false })).restrictTools, false);
   // Other settings are unaffected by the switch.
   assert.equal(pluginSettings({ restrictTools: false }).timeoutMs, 30_000);
+});
+
+test('fact confirmation policy defaults to ask; only the explicit opt-in enables agent judgment', () => {
+  assert.equal(pluginSettings({}).factConfirmPolicy, 'ask');
+  assert.equal(pluginSettings({ factConfirmPolicy: { get: () => 'agent' } }).factConfirmPolicy, 'agent');
+  assert.equal(pluginSettings({ factConfirmPolicy: 'agent' }).factConfirmPolicy, 'agent');
+  // Any other value falls back to the safe interactive default rather than
+  // failing startup or silently widening the approval gate.
+  assert.equal(pluginSettings({ factConfirmPolicy: 'auto' }).factConfirmPolicy, 'ask');
+  assert.equal(pluginSettings({ factConfirmPolicy: { get: () => '' } }).factConfirmPolicy, 'ask');
+  assert.equal(pluginSettings({ factConfirmPolicy: { get: () => 'AGENT' } }).factConfirmPolicy, 'ask');
 });
