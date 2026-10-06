@@ -121,6 +121,23 @@ function useSessionGeoStage(sessions: SessionsService | undefined, sessionId: st
   return view
 }
 
+type PendingQuestion = { callId?: string; questions?: Array<{ question?: string; header?: string }>; state?: string }
+type UserQuestionsView = { active?: PendingQuestion[] } | undefined
+
+/** 订阅同一会话的 userQuestions 投影，返回等待用户答复的提问批次。 */
+function useSessionPendingQuestions(sessions: SessionsService | undefined, sessionId: string | undefined): PendingQuestion[] {
+  const [active, setActive] = useState<PendingQuestion[]>([])
+  useEffect(() => {
+    if (!sessions || !sessionId) return
+    const store = sessions.binding(sessionId)?.session?.projections?.faceOf('userQuestions')
+    if (!store) return
+    const reconcile = (): void => setActive(store.getSnapshot()?.active ?? [])
+    reconcile()
+    return store.subscribe(reconcile)
+  }, [sessions, sessionId])
+  return active
+}
+
 /** 流程条：canonical 阶段顺序 + 三态；无 GEO 活动时给出一句空态。 */
 export function GeoStageStepper(props: { view?: StageView }): ReactNode {
   const { view } = props
@@ -152,12 +169,24 @@ export function GeoStageStepper(props: { view?: StageView }): ReactNode {
   )
 }
 
-/** 会话视图标签页：与「轨迹」同级，展示当前会话的 GEO 流程进度。 */
+/** 会话视图标签页：与「轨迹」同级，展示当前会话的 GEO 流程进度与待答复提问。 */
 export function GeoSessionProgressView(props: GeoSessionProgressViewProps): ReactNode {
   const { sessionId, sessions } = props
   const view = useSessionGeoStage(sessions, sessionId)
+  const pending = useSessionPendingQuestions(sessions, sessionId)
+  const firstQuestion = pending[0]?.questions?.[0]
   return (
     <section className={styles.page}>
+      {pending.length > 0 ? (
+        <div className={styles.pendingBanner} data-testid="geo-pending-questions">
+          <span className={styles.pendingDot} aria-hidden="true">⏳</span>
+          <span>
+            {pending.length > 1
+              ? `AI 有 ${pending.length} 批问题等待你的答复，请在对话中作答。`
+              : `AI 正在等待你的答复${firstQuestion?.question ? `：「${firstQuestion.question}」` : '，请在对话中作答。'} 答复后才会继续。`}
+          </span>
+        </div>
+      ) : null}
       <div className={styles.stepperCard}>
         <h3 className={styles.heading}>GEO 流程进度</h3>
         <GeoStageStepper view={view} />

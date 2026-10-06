@@ -414,4 +414,20 @@ export function apply(ctx, config = {}) {
     console.warn(`[geo-agent-dsh-plugin] GEO tool isolation is active: every agent in this DSH runtime sees only the ${toolNames.length} GEO tools (${toolNames.join(', ')}). `
       + 'This is by design in a dedicated GEO DSH home. To keep the GEO tools but stop masking other tools, set config.restrictTools to false on the geo-agent-dsh-plugin row of that profile\'s cordis.patch.yml.');
   }
+
+  // 隔离开关的即时收敛。volatile 配置没有变更事件、也不会重启 fiber，
+  // 只能用轻量签名轮询（2 秒读一个布尔，无变化即空转）把切换同步给
+  // 已经存在的 Agent；新建/销毁 Agent 仍走上面的生命周期钩子。
+  let appliedRestriction = restrictToolsEnabled();
+  ctx.effect(() => {
+    const timer = setInterval(() => {
+      const current = restrictToolsEnabled();
+      if (current === appliedRestriction) return;
+      appliedRestriction = current;
+      reconcileAgents();
+    }, 2_000);
+    // unref：轮询不阻塞进程退出（测试与无头场景都需要）。
+    timer.unref?.();
+    return () => clearInterval(timer);
+  }, 'geo-workbench: isolation convergence poll');
 }

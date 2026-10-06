@@ -45,6 +45,12 @@ dsh plugin --profile <profile> add github:crazycola23/geo-agent-dsh-plugin
 
 保存后用 `geo_connection_status` 逐个项目验证绑定关系。
 
+### 界面入口
+
+- **左侧导航「GEO 工作台」** —— 一级入口，主视图页上半是流程进度、下半是配置卡（等同设置页那张卡）。
+- **会话视图标签「GEO 进度」** —— 会话里与「轨迹」同级；按当前会话显示八阶段流程条（项目→资料→事实→问题→内容→发布→检测→报告），AI 每完成一步自动更新；`ask_user_question` 有待答复的批次时，顶部出现提示横幅。
+- 流程数据来自会话投影（geoWorkflow），是「AI 实际调用了哪些 GEO 工具」的实时投影，不是 GEO 后端业务状态的真值。
+
 > 面向使用者的完整说明见 [`sources/geo-workflow/references/operator-guide.md`](sources/geo-workflow/references/operator-guide.md)；
 > 也可以把配套 Skill 装进 `<DSH_HOME>\skills\geo-workflow` 后，在 DSH 里输入 `/geo-workflow` 调用。
 
@@ -52,10 +58,10 @@ dsh plugin --profile <profile> add github:crazycola23/geo-agent-dsh-plugin
 
 卡片里的「运行隔离」决定这个 DSH 实例给 Agent 看多少工具：
 
-- **开**：只暴露本插件的 GEO 工具，终端、文件、浏览器等一律不可见 —— 适合把 GEO 令牌与通用工具隔开
+- **开**：只暴露本插件的 GEO 工具（外加内置 `ask_user_question`，供 agent 向人提问），终端、文件、浏览器等一律不可见 —— 适合把 GEO 令牌与通用工具隔开
 - **关**：GEO 工具与其它工具同时可用（方便，但令牌与通用工具处在同一环境）
 
-切换后配置立即写入；若工具列表没有马上变化，**完全退出 DSH 再启动**一定生效。
+切换后写入即时生效：volatile 配置没有变更事件，插件用 2 秒一次的轻量签名轮询把切换收敛到已存在的 Agent；若工具列表仍没有变化，**完全退出 DSH 再启动**一定生效。
 
 设置卡只保留完成配置所必需的信息：标题、字段、凭据状态、隔离开关与错误反馈。
 装饰性文案（页头副标题、凭据流程示意图、分区说明段落、页脚说明书引导）已删除，
