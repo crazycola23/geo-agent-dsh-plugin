@@ -90,6 +90,56 @@ test('the factConfirmPolicy opt-in delegates fact-lifecycle writes to the agent,
   assert.equal(defaultAsk.kind, 'ask');
 });
 
+test('each delegation domain honours only its own opt-in key', async () => {
+  const next = async () => ({ kind: 'allow' });
+  const domainSample = {
+    contentPrepPolicy: 'post_questions_by_id_transition',
+    contentGenerationPolicy: 'post_content_generation_tasks_by_id_execute',
+    detectionPolicy: 'post_detection_runs',
+    reportPolicy: 'post_report_revisions_by_id_confirm',
+  };
+  for (const [policyKey, operation] of Object.entries(domainSample)) {
+    const delegated = await geoApprovalDecision({
+      name: 'geo_api',
+      arguments: { operation, projectId: '101', body: { projectId: 101 } },
+    }, next, catalog, { [policyKey]: 'agent' });
+    assert.equal(delegated.kind, 'allow', `${policyKey} → ${operation}`);
+
+    // A different domain's opt-in does not delegate this operation.
+    const otherKey = Object.keys(domainSample).find(key => key !== policyKey);
+    const notDelegated = await geoApprovalDecision({
+      name: 'geo_api',
+      arguments: { operation, projectId: '101', body: { projectId: 101 } },
+    }, next, catalog, { [otherKey]: 'agent' });
+    assert.equal(notDelegated.kind, 'ask', `${otherKey} must not cover ${operation}`);
+  }
+});
+
+test('side-effect-free query POSTs pass and publish writes are a hard ask under every policy', async () => {
+  const next = async () => ({ kind: 'allow' });
+  const allAgent = {
+    factConfirmPolicy: 'agent',
+    contentPrepPolicy: 'agent',
+    contentGenerationPolicy: 'agent',
+    detectionPolicy: 'agent',
+    reportPolicy: 'agent',
+  };
+  for (const operation of ['post_publish_records_preview', 'post_publish_records_preview_from_resource', 'post_publish_records_by_id_query_order', 'post_detection_attempts_by_id_query_order']) {
+    const allowed = await geoApprovalDecision({
+      name: 'geo_api',
+      arguments: { operation, projectId: '101' },
+    }, next, catalog, {});
+    assert.equal(allowed.kind, 'allow', operation);
+  }
+  for (const operation of ['post_publish_records_confirm', 'post_publish_records_by_id_republish', 'post_publish_records_by_id_cancel', 'post_publish_records_manual']) {
+    const hardAsk = await geoApprovalDecision({
+      name: 'geo_api',
+      arguments: { operation, projectId: '101', body: { amount: 1 } },
+    }, next, catalog, allAgent);
+    assert.equal(hardAsk.kind, 'ask', operation);
+  }
+});
+
 test('plugin registers the generated API surface and restricts each agent to GEO tools', async () => {
   const registered = [];
   const events = new Map();

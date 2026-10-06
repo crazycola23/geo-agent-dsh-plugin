@@ -35,6 +35,15 @@ export const Config = Schema.object({
   // prompt. It never covers evidence uploads or publish / detect / report
   // writes, and it does not change GEO's own server-side authorization.
   factConfirmPolicy: Schema.string().default('ask').volatile(),
+  // Write-delegation policies, one per domain (see POLICY_DOMAINS in index.js).
+  // 'ask' (default) keeps the operator prompt for that domain's writes; the
+  // explicit 'agent' value delegates them to the running agent's judgment.
+  // Unknown values fall back to 'ask', and publish-confirm-class writes can
+  // never be delegated regardless of these settings (HARD_ASK_WRITES).
+  contentPrepPolicy: Schema.string().default('ask').volatile(),
+  contentGenerationPolicy: Schema.string().default('ask').volatile(),
+  detectionPolicy: Schema.string().default('ask').volatile(),
+  reportPolicy: Schema.string().default('ask').volatile(),
   projects: Schema.array(Schema.object({
     projectId: Schema.string(),
     name: Schema.string().default(''),
@@ -43,6 +52,11 @@ export const Config = Schema.object({
 
 function currentValue(value) {
   return value && typeof value.get === 'function' ? value.get() : value;
+}
+
+/** One delegation policy: only the explicit opt-in widens the gate. */
+function policyValue(config, key) {
+  return currentValue(config[key]) === 'agent' ? 'agent' : 'ask';
 }
 
 /** Resolve one request's configuration snapshot from DSH volatile values. */
@@ -69,7 +83,11 @@ export function pluginSettings(config = {}, env = process.env) {
     restrictTools: configuredRestrictTools === undefined ? true : Boolean(configuredRestrictTools),
     // Anything other than the explicit opt-in value falls back to the safe
     // interactive default instead of failing startup or widening the gate.
-    factConfirmPolicy: currentValue(config.factConfirmPolicy) === 'agent' ? 'agent' : 'ask',
+    factConfirmPolicy: policyValue(config, 'factConfirmPolicy'),
+    contentPrepPolicy: policyValue(config, 'contentPrepPolicy'),
+    contentGenerationPolicy: policyValue(config, 'contentGenerationPolicy'),
+    detectionPolicy: policyValue(config, 'detectionPolicy'),
+    reportPolicy: policyValue(config, 'reportPolicy'),
     projects: Array.isArray(configuredProjects) ? configuredProjects.map(project => ({
       projectId: typeof project?.projectId === 'string' ? project.projectId.trim() : '',
       name: typeof project?.name === 'string' ? project.name.trim() : '',

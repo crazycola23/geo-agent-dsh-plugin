@@ -12,15 +12,87 @@ const here = dirname(fileURLToPath(import.meta.url));
 const catalog = JSON.parse(readFileSync(resolve(here, 'generated', 'openapi.catalog.json'), 'utf8'));
 const operationNames = Object.keys(catalog.operations).sort();
 const toolNames = ['geo_api', 'geo_describe_operation', 'geo_list_evidence_files', 'geo_upload_evidence', 'geo_connection_status'];
-// Fact-lifecycle writes covered by the factConfirmPolicy opt-in. Deliberately
-// narrow: extraction, content generation, publishing, detection, reports and
-// evidence uploads always keep their operator prompt regardless of the policy.
-const FACT_LIFECYCLE_WRITES = new Set([
-  'post_fact_revisions',
-  'post_fact_revisions_by_id_confirm',
-  'post_fact_revisions_by_id_disable',
-  'post_fact_revisions_by_id_dispute',
-  'post_fact_revisions_by_id_reenable',
+// Write-delegation domains. Each key maps to one settings policy (`ask` keeps
+// the operator prompt, the explicit 'agent' value delegates the domain's
+// writes to the running agent's judgment). Default-deny for automation: an
+// operation in no domain keeps its prompt. Deliberately absent: publishing
+// (HARD_ASK_WRITES below), evidence, media/OSS and project writes.
+const POLICY_DOMAINS = {
+  // Fact lifecycle: revisions and extraction-candidate adjudication.
+  factConfirmPolicy: new Set([
+    'post_facts',
+    'post_fact_revisions',
+    'post_fact_revisions_by_id_confirm',
+    'post_fact_revisions_by_id_disable',
+    'post_fact_revisions_by_id_dispute',
+    'post_fact_revisions_by_id_reenable',
+    'post_facts_ai_extract_by_runid_candidates_by_candidateid_confirm',
+    'post_facts_ai_extract_by_runid_candidates_by_candidateid_reject',
+    'post_facts_ai_extract_by_runid_candidates_batch_confirm',
+  ]),
+  // Reversible content preparation: questions, query panels, content elements,
+  // and AI extraction runs that only produce candidates.
+  contentPrepPolicy: new Set([
+    'post_facts_ai_extract',
+    'post_facts_ai_extract_by_runid_retry',
+    'post_questions',
+    'post_questions_by_id_transition',
+    'post_question_generation_tasks',
+    'post_question_generation_tasks_by_taskid_regenerate',
+    'post_query_panels',
+    'post_query_panels_by_panelid_freeze',
+    'post_query_panels_by_panelid_new_version',
+    'post_content_elements',
+    'post_content_elements_ai_extract',
+    'post_content_elements_by_elementid_ai_split',
+    'post_content_elements_by_elementid_enabled',
+  ]),
+  // Draft production: spends LLM budget but never leaves the platform.
+  contentGenerationPolicy: new Set([
+    'post_content_generation_tasks',
+    'put_content_generation_tasks_by_id',
+    'post_content_generation_tasks_by_id_enabled',
+    'post_content_generation_tasks_by_id_execute',
+    'post_content_generation_tasks_by_id_cancel',
+    'post_article_card_compose',
+  ]),
+  // Detection runs spend the project's detect budget bucket; the bucket is a
+  // server-side hard stop and this policy only removes the operator prompt.
+  detectionPolicy: new Set([
+    'post_detection_plans',
+    'post_detection_plans_by_id_execute',
+    'post_detection_runs',
+    'post_detection_runs_by_runid_pause',
+    'post_detection_attempts_by_id_retry',
+  ]),
+  // Reporting: internal revisions, rendering and rule-governed recovery with
+  // the original request and idempotency key.
+  reportPolicy: new Set([
+    'post_customer_geo_reports',
+    'post_customer_geo_reports_by_reportid_retry',
+    'post_detection_runs_by_runid_customer_geo_reports',
+    'post_report_revisions',
+    'post_report_revisions_by_id_confirm',
+    'post_report_revisions_by_id_return',
+    'post_report_revisions_by_id_artifacts_render',
+  ]),
+};
+// Writes that move money or publish externally. Checked before any policy
+// lookup so a future domain edit cannot silently cover them.
+const HARD_ASK_WRITES = new Set([
+  'post_publish_records_confirm',
+  'post_publish_records_by_id_republish',
+  'post_publish_records_by_id_cancel',
+  'post_publish_records_manual',
+]);
+// Query-shaped POSTs with no external side effect: quote previews and provider
+// order lookups. Always allowed so the agent can prepare an exact preview for
+// the operator and reconcile unknown outcomes per the idempotency rules.
+const SIDE_EFFECT_FREE_WRITES = new Set([
+  'post_publish_records_preview',
+  'post_publish_records_preview_from_resource',
+  'post_publish_records_by_id_query_order',
+  'post_detection_attempts_by_id_query_order',
 ]);
 
 function safeApprovalValue(value, fallback) {
@@ -71,11 +143,14 @@ export async function geoApprovalDecision(execution, next, apiCatalog = catalog,
     return { kind: 'deny', reason: 'Use the dedicated constrained tool for this non-JSON GEO operation' };
   }
   if (!isWriteOperation(apiCatalog, operationName)) return next();
-  // Operator opt-in: fact-lifecycle writes are delegated to the agent's own
-  // judgment. Scoped to the exact operation set above; every other write still
-  // asks, and the live settings snapshot makes the switch take effect without
-  // a restart.
-  if (settings?.factConfirmPolicy === 'agent' && FACT_LIFECYCLE_WRITES.has(operationName)) return next();
+  // Side-effect-free query-shaped POSTs pass unconditionally: previews for the
+  // operator and order lookups for unknown-outcome reconciliation.
+  if (SIDE_EFFECT_FREE_WRITES.has(operationName)) return next();
+  // Hard red line: money-moving and externally-publishing writes always keep
+  // their prompt, regardless of any configured policy.
+  const delegated = !HARD_ASK_WRITES.has(operationName)
+    && Object.entries(POLICY_DOMAINS).some(([policyKey, operations]) => operations.has(operationName) && settings?.[policyKey] === 'agent');
+  if (delegated) return next();
   const actionSummary = approvalArgumentSummary(execution.arguments);
   const prompt = `请审批 GEO 写操作 ${operation.method} ${operation.path}（${operation.summary}）。关键参数：${actionSummary}。服务端仍会校验权限。`;
   return {

@@ -6,7 +6,7 @@ import { normalizeBasePath } from '../src/api-client.js';
 test('DSH configuration schema exposes live endpoint, evidence directory, and timeout fields', () => {
   const schema = Config.toJSON();
   const objectNode = schema.refs[String(schema.uid)];
-  assert.deepEqual(Object.keys(objectNode.dict).sort(), ['apiBasePath', 'apiBaseUrl', 'evidenceDirectory', 'factConfirmPolicy', 'projects', 'restrictTools', 'timeoutMs']);
+  assert.deepEqual(Object.keys(objectNode.dict).sort(), ['apiBasePath', 'apiBaseUrl', 'contentGenerationPolicy', 'contentPrepPolicy', 'detectionPolicy', 'evidenceDirectory', 'factConfirmPolicy', 'projects', 'reportPolicy', 'restrictTools', 'timeoutMs']);
   for (const field of Object.values(objectNode.dict)) {
     assert.equal(schema.refs[String(field)].meta.volatile, true);
   }
@@ -28,6 +28,10 @@ test('settings resolve live DSH values and retain environment fallbacks', () => 
     timeoutMs: 45_000,
     restrictTools: true,
     factConfirmPolicy: 'ask',
+    contentPrepPolicy: 'ask',
+    contentGenerationPolicy: 'ask',
+    detectionPolicy: 'ask',
+    reportPolicy: 'ask',
     projects: [{ projectId: '101', name: '品牌 A' }, { projectId: '202', name: '' }],
   });
   baseUrl = '';
@@ -39,6 +43,10 @@ test('settings resolve live DSH values and retain environment fallbacks', () => 
     timeoutMs: 30_000,
     restrictTools: true,
     factConfirmPolicy: 'ask',
+    contentPrepPolicy: 'ask',
+    contentGenerationPolicy: 'ask',
+    detectionPolicy: 'ask',
+    reportPolicy: 'ask',
     projects: [],
   });
 });
@@ -79,4 +87,15 @@ test('fact confirmation policy defaults to ask; only the explicit opt-in enables
   assert.equal(pluginSettings({ factConfirmPolicy: 'auto' }).factConfirmPolicy, 'ask');
   assert.equal(pluginSettings({ factConfirmPolicy: { get: () => '' } }).factConfirmPolicy, 'ask');
   assert.equal(pluginSettings({ factConfirmPolicy: { get: () => 'AGENT' } }).factConfirmPolicy, 'ask');
+});
+
+test('every delegation domain defaults to ask and honors only its own explicit opt-in', () => {
+  for (const key of ['contentPrepPolicy', 'contentGenerationPolicy', 'detectionPolicy', 'reportPolicy']) {
+    assert.equal(pluginSettings({})[key], 'ask', key);
+    assert.equal(pluginSettings({ [key]: { get: () => 'agent' } })[key], 'agent', key);
+    assert.equal(pluginSettings({ [key]: { get: () => 'auto' } })[key], 'ask', key);
+    // Enabling one domain never widens another.
+    assert.equal(pluginSettings({ detectionPolicy: 'agent' }).contentPrepPolicy, 'ask');
+    assert.equal(pluginSettings({ reportPolicy: 'agent' }).detectionPolicy, 'ask');
+  }
 });
