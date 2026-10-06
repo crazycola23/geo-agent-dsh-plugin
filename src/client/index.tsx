@@ -1,8 +1,9 @@
 import { useSyncExternalStore } from 'react'
 import type { ReactNode } from 'react'
 import type { Context } from '@deepseek-ai/cordis'
+import { GeoWorkbenchPage } from './GeoWorkbenchPage.tsx'
+import type { GeoWorkbenchPageProps, SessionsService } from './GeoWorkbenchPage.tsx'
 import { GeoSettingsCard } from './GeoSettingsCard.tsx'
-import type { GeoSettingsCardProps } from './GeoSettingsCard.tsx'
 import { en, zh } from './locales.ts'
 
 const LOCALE_NAMESPACE = 'settings.geo-workbench'
@@ -65,6 +66,12 @@ export function apply(rawContext: Context): void {
   // 这一段绝不能静默：曾经因为一行「次要依赖」（remote.credentials 未在 inject 里声明）
   // 抛出 `cannot get property "remote.credentials" without inject`，把整张卡片一起带走，
   // 而 Console 里连红字都没有。任何失败都必须留下日志。
+  // 会话服务是软依赖：宿主没提供时工作台页只少流程条，设置卡照常注册。
+  const sessionsRef: { current: SessionsService | undefined } = { current: undefined }
+  ctx.inject(['sessions'], (scope) => {
+    sessionsRef.current = (scope as { sessions?: SessionsService }).sessions
+  })
+
   ctx.inject(['configForms'], (scoped) => {
     try {
       const formScope = scoped.configForms?.get(PROFILE_ENTRY_ID)
@@ -92,7 +99,7 @@ export function apply(rawContext: Context): void {
           return undefined
         }
       })()
-      const injected = (): GeoSettingsCardProps => ({ scope, useSnapshot, t, credentials: credentialRemote })
+      const injected = (): GeoWorkbenchPageProps => ({ scope, useSnapshot, t, credentials: credentialRemote, sessions: sessionsRef.current })
 
       scoped.effect(() => scoped.slots.inject('plugins.bundle.config', () => scoped.slots.register({
         name: 'plugins.bundle.config',
@@ -109,7 +116,7 @@ export function apply(rawContext: Context): void {
         key: PAGE_KEY,
         locale: LOCALE_NAMESPACE,
         inject: injected,
-      }, GeoSettingsCard)), 'geo-workbench: main page')
+      }, GeoWorkbenchPage)), 'geo-workbench: main page')
       scoped.effect(() => scoped.slots.inject('sidebar.panellist', () => scoped.slots.register({
         name: 'sidebar.panellist',
         id: PAGE_KEY,

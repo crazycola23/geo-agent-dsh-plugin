@@ -1,0 +1,104 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.stepperCard {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+  border: 1px solid var(--dsw-alias-border-secondary, #e5e7eb);
+  border-radius: 12px;
+}
+
+.heading {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.track {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.step {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  position: relative;
+}
+
+.step:not(:last-child)::after {
+  content: "";
+  position: absolute;
+  right: -6px;
+  top: 50%;
+  width: 12px;
+  height: 1px;
+  background: var(--dsw-alias-border-secondary, #e5e7eb);
+}
+
+.dot {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  font-size: 11px;
+  line-height: 1;
+}
+
+.stepLabel {
+  font-size: 12px;
+}
+
+.stepPending .dot {
+  border: 1px solid var(--dsw-alias-border-secondary, #e5e7eb);
+  color: var(--dsw-alias-label-tertiary, #6b7280);
+}
+
+.stepPending .stepLabel {
+  color: var(--dsw-alias-label-tertiary, #6b7280);
+}
+
+.stepActive .dot {
+  border: 1px solid var(--dsw-alias-state-business-primary, #4f8cff);
+  background: color-mix(in srgb, var(--dsw-alias-state-business-primary, #4f8cff) 14%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--dsw-alias-state-business-primary, #4f8cff) 12%, transparent);
+}
+
+.stepActive .stepLabel {
+  color: var(--dsw-alias-label-primary, #111827);
+  font-weight: 600;
+}
+
+.stepDone .dot {
+  border: 1px solid transparent;
+  background: var(--dsw-alias-state-business-primary, #4f8cff);
+  color: var(--dsw-alias-label-primary-foreground, #fff);
+}
+
+.stepDone .stepLabel {
+  color: var(--dsw-alias-label-secondary, #4b5563);
+}
+
+.caption {
+  margin: 0;
+  color: var(--dsw-alias-label-secondary, #4b5563);
+  font-size: 12px;
+}
+
+.idle {
+  margin: 0;
+  color: var(--dsw-alias-label-tertiary, #6b7280);
+  font-size: 12px;
+}

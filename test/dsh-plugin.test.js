@@ -187,7 +187,7 @@ test('plugin registers the generated API surface and restricts each agent to GEO
   assert.match(warnings[0], /tool isolation is active/);
   assert.match(warnings[0], /restrictTools/);
   assert.deepEqual(registered.map(tool => tool.name), ['geo_api', 'geo_describe_operation', 'geo_list_evidence_files', 'geo_upload_evidence', 'geo_connection_status']);
-  const expectedRestriction = { allow: ['geo_api', 'geo_describe_operation', 'geo_list_evidence_files', 'geo_upload_evidence', 'geo_connection_status'] };
+  const expectedRestriction = { allow: ['geo_api', 'geo_describe_operation', 'geo_list_evidence_files', 'geo_upload_evidence', 'geo_connection_status', 'ask_user_question'] };
   assert.deepEqual(existing.state.restriction, expectedRestriction);
   assert.equal(events.has('tools/pre-execute'), true);
   assert.equal(events.has('agent/created'), true);

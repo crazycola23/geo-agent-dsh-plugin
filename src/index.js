@@ -1,17 +1,21 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
+import Schema from '@deepseek-ai/schemastery';
 import { defineTool } from '@deepseek-ai/dsh-tools';
 import { createGeoAuthProvider, executeWithGeoProjectToken } from './auth-provider.js';
 import { executeGeoOperation, executeGeoEvidenceUpload, listStagedEvidenceFiles, describeOperation, isWriteOperation } from './api-client.js';
 import { Config, pluginSettings } from './config.js';
 import { resolveProjectSelection } from './project-context.js';
 import { schemaSummary } from './schema.js';
+import { emptyStageState, foldToolCall, foldToolResult, stageView } from './stages.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const catalog = JSON.parse(readFileSync(resolve(here, 'generated', 'openapi.catalog.json'), 'utf8'));
 const operationNames = Object.keys(catalog.operations).sort();
-const toolNames = ['geo_api', 'geo_describe_operation', 'geo_list_evidence_files', 'geo_upload_evidence', 'geo_connection_status'];
+// ask_user_question 是 DSH 核心内置工具；列入白名单是为了 restrictTools
+// 隔离打开时它不被一起屏蔽——agent 向人提问（带候选项）依赖它。
+const toolNames = ['geo_api', 'geo_describe_operation', 'geo_list_evidence_files', 'geo_upload_evidence', 'geo_connection_status', 'ask_user_question'];
 // Write-delegation domains. Each key maps to one settings policy (`ask` keeps
 // the operator prompt, the explicit 'agent' value delegates the domain's
 // writes to the running agent's judgment). Default-deny for automation: an
@@ -307,6 +311,64 @@ export function apply(ctx, config = {}) {
   }));
 
   ctx.on('tools/pre-execute', (execution, next) => geoApprovalDecision(execution, next, catalog, currentSettings()));
+
+  // 会话投影：把 GEO 工具调用折成业务阶段进度，工作台页据此画流程条。
+  // inject 是软依赖：宿主（或测试桩）没有该方法、缺 sessionProjections
+  // 服务时只是不注册投影，工具与设置卡不受影响。
+  if (typeof ctx.inject === 'function') {
+    ctx.inject(['sessionProjections'], (projectionCtx) => {
+    projectionCtx.sessionProjections.register({
+      key: 'geoWorkflow',
+      stateSchema: Schema.object({
+        inheritedEventCount: Schema.number().int().min(0),
+        lastSeq: Schema.number().int().min(0),
+        stages: Schema.dict(Schema.object({
+          calls: Schema.number().int().min(0),
+          lastOp: Schema.string(),
+          lastCallId: Schema.string(),
+          done: Schema.boolean(),
+        }).strict()),
+      }).strict(),
+      init: (_header, inheritedEventCount) => ({
+        inheritedEventCount: Number(inheritedEventCount) || 0,
+        lastSeq: 0,
+        stages: {},
+      }),
+      apply: (state, event) => {
+        if (event.seq < state.inheritedEventCount) return state;
+        if (event.type === 'tool/call') {
+          if (event.data?.name !== 'geo_api' && event.data?.name !== 'geo_upload_evidence') return state;
+          const operation = event.data.name === 'geo_upload_evidence'
+            ? 'post_evidence_sources_upload'
+            : event.data.arguments?.operation;
+          return foldToolCall(state, {
+            callId: event.data.callId,
+            operation,
+            tag: typeof operation === 'string' ? catalog.operations[operation]?.tag : undefined,
+            seq: event.seq,
+          });
+        }
+        if (event.type === 'tool/result') {
+          return foldToolResult(state, { callId: event.data?.message?.toolCallId, ok: !event.data?.error });
+        }
+        return state;
+      },
+      wire: {
+        viewSchema: Schema.object({
+          stages: Schema.array(Schema.object({
+            key: Schema.string(),
+            label: Schema.string(),
+            status: Schema.string(),
+            calls: Schema.number(),
+            lastOp: Schema.string(),
+          }).strict()),
+        }).strict(),
+        view: (state) => stageView(state),
+      },
+      stateVersion: 1,
+    });
+  });
+}
 
   // Tool-level isolation. Restrict each current and future agent in its own scope
   // — a global restriction would also mask tools for unrelated agents in a shared
