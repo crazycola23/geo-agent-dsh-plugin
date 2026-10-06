@@ -12,7 +12,20 @@ type CredentialRemote = {
 }
 type ProjectSettings = { projectId: string; name?: string }
 type ProjectDraft = ProjectSettings & { draftKey: string; apiToken: string; persisted: boolean }
-type SettingsValue = { apiBaseUrl?: string; apiBasePath?: string; evidenceDirectory?: string; timeoutMs?: number; projects?: ProjectSettings[]; restrictTools?: boolean }
+type PolicyKey = 'factConfirmPolicy' | 'contentPrepPolicy' | 'contentGenerationPolicy' | 'detectionPolicy' | 'reportPolicy'
+type SettingsValue = {
+  apiBaseUrl?: string
+  apiBasePath?: string
+  evidenceDirectory?: string
+  timeoutMs?: number
+  projects?: ProjectSettings[]
+  restrictTools?: boolean
+  factConfirmPolicy?: string
+  contentPrepPolicy?: string
+  contentGenerationPolicy?: string
+  detectionPolicy?: string
+  reportPolicy?: string
+}
 type ScopeSnapshot = { value?: SettingsValue; writable?: boolean }
 type FormScope = {
   getSnapshot(): ScopeSnapshot
@@ -71,6 +84,16 @@ function draftsFrom(projects: ProjectSettings[] | undefined): ProjectDraft[] {
     persisted: true,
   }))
 }
+
+// 审批档位域，与插件 POLICY_DOMAINS 一一对应；显示层归一化也保持同一口径：
+// 只有显式 'agent' 才是自动档，其余任何值都按「询问」处理。
+const POLICY_DOMAINS: Array<{ key: PolicyKey; name: string; scope: string }> = [
+  { key: 'factConfirmPolicy', name: '事实确认', scope: '事实修订与提取候选的确认、停用、存疑' },
+  { key: 'contentPrepPolicy', name: '内容准备', scope: '问题、查询面板、内容要素、事实提取发起' },
+  { key: 'contentGenerationPolicy', name: '内容生成', scope: '生成任务与文章卡片，会消耗 LLM 费用' },
+  { key: 'detectionPolicy', name: '检测', scope: '检测计划、运行与重试；预算仍由服务端硬校验' },
+  { key: 'reportPolicy', name: '报告', scope: '报告生成、确认、渲染与按规则恢复' },
+]
 
 function Field(props: {
   label: string
@@ -153,6 +176,9 @@ export function GeoSettingsCard(props: GeoSettingsCardProps): ReactNode {
   const [confirmRemoveKey, setConfirmRemoveKey] = useState<string | undefined>()
   const [isolationBusy, setIsolationBusy] = useState(false)
   const [isolationError, setIsolationError] = useState<string | undefined>()
+  const [tab, setTab] = useState<'connection' | 'runtime'>('connection')
+  const [policyBusyKey, setPolicyBusyKey] = useState<PolicyKey | undefined>()
+  const [policyError, setPolicyError] = useState<string | undefined>()
   const nextDraftId = useRef(0)
 
   useEffect(() => {
@@ -374,6 +400,20 @@ export function GeoSettingsCard(props: GeoSettingsCardProps): ReactNode {
     }
   }
 
+  // 审批档位：与隔离开关同一交互模式，写入即生效；只有显式 'agent' 视为自动档。
+  const policyValue = (key: PolicyKey): 'ask' | 'agent' => (value[key] === 'agent' ? 'agent' : 'ask')
+  const setPolicy = async (key: PolicyKey, next: 'ask' | 'agent'): Promise<void> => {
+    setPolicyBusyKey(key)
+    setPolicyError(undefined)
+    try {
+      await scope.set(key, next)
+    } catch (error) {
+      setPolicyError(errorMessage(error))
+    } finally {
+      setPolicyBusyKey(undefined)
+    }
+  }
+
   return (
     <section className={styles.card} data-testid="geo-workbench-card">
       <button
@@ -394,6 +434,27 @@ export function GeoSettingsCard(props: GeoSettingsCardProps): ReactNode {
 
       {expanded ? (
         <div className={styles.body}>
+          <div className={styles.tabs} role="tablist" data-testid="geo-settings-tabs">
+            <button
+              className={tab === 'connection' ? `${styles.tab} ${styles.tabActive}` : styles.tab}
+              type="button"
+              role="tab"
+              aria-selected={tab === 'connection'}
+              data-testid="geo-tab-connection"
+              onClick={() => setTab('connection')}
+            >连接</button>
+            <button
+              className={tab === 'runtime' ? `${styles.tab} ${styles.tabActive}` : styles.tab}
+              type="button"
+              role="tab"
+              aria-selected={tab === 'runtime'}
+              data-testid="geo-tab-runtime"
+              onClick={() => setTab('runtime')}
+            >运行</button>
+          </div>
+
+          {tab === 'connection' ? (
+            <>
           <div className={styles.section}>
             <h3 className={styles.sectionTitle}>GEO 服务</h3>
             <Field
@@ -516,6 +577,22 @@ export function GeoSettingsCard(props: GeoSettingsCardProps): ReactNode {
             {credentialError ? <p className={styles.inlineError}>{credentialError}</p> : null}
           </div>
 
+          <div className={styles.footer}>
+            <button
+              className={styles.primaryButton}
+              type="button"
+              data-testid="geo-settings-save"
+              disabled={busy || !snapshot.writable || !dirty}
+              onClick={() => { void save() }}
+            >
+              {busy ? '保存中…' : '保存配置'}
+            </button>
+            {saved ? <span className={styles.success}>配置已保存</span> : null}
+            {failure ? <span className={styles.failure} role="alert">{failure}</span> : null}
+          </div>
+            </>
+          ) : (
+            <>
           <div className={styles.section}>
             <div className={styles.sectionHeading}>
               <h3 className={styles.sectionTitle}>运行隔离</h3>
@@ -538,19 +615,45 @@ export function GeoSettingsCard(props: GeoSettingsCardProps): ReactNode {
             {isolationError ? <p className={styles.inlineError}>{isolationError}</p> : null}
           </div>
 
-          <div className={styles.footer}>
-            <button
-              className={styles.primaryButton}
-              type="button"
-              data-testid="geo-settings-save"
-              disabled={busy || !snapshot.writable || !dirty}
-              onClick={() => { void save() }}
-            >
-              {busy ? '保存中…' : '保存配置'}
-            </button>
-            {saved ? <span className={styles.success}>配置已保存</span> : null}
-            {failure ? <span className={styles.failure} role="alert">{failure}</span> : null}
+          <div className={styles.section}>
+            <div className={styles.sectionHeading}>
+              <h3 className={styles.sectionTitle}>审批档位</h3>
+            </div>
+            {POLICY_DOMAINS.map(({ key, name, scope }) => {
+              const current = policyValue(key)
+              const pending = policyBusyKey !== undefined || !snapshot.writable
+              return (
+                <div className={styles.policyRow} key={key} data-testid={`geo-policy-${key}`}>
+                  <div className={styles.policyMeta}>
+                    <span className={styles.policyName}>{name}</span>
+                    <span className={styles.policyScope}>{scope}</span>
+                  </div>
+                  <div className={styles.segmented} role="group" aria-label={`${name}审批档位`}>
+                    <button
+                      className={current === 'ask' ? `${styles.segmentButton} ${styles.segmentButtonActive}` : styles.segmentButton}
+                      type="button"
+                      aria-pressed={current === 'ask'}
+                      data-testid={`geo-policy-${key}-ask`}
+                      disabled={pending}
+                      onClick={() => { void setPolicy(key, 'ask') }}
+                    >询问</button>
+                    <button
+                      className={current === 'agent' ? `${styles.segmentButton} ${styles.segmentButtonActive}` : styles.segmentButton}
+                      type="button"
+                      aria-pressed={current === 'agent'}
+                      data-testid={`geo-policy-${key}-agent`}
+                      disabled={pending}
+                      onClick={() => { void setPolicy(key, 'agent') }}
+                    >自动</button>
+                  </div>
+                </div>
+              )
+            })}
+            <p className={styles.hint}>「自动」授权 Agent 按判断直接执行该域写入；发布确认类操作始终需要人工审批。</p>
+            {policyError ? <p className={styles.inlineError}>{policyError}</p> : null}
           </div>
+            </>
+          )}
         </div>
       ) : null}
     </section>
