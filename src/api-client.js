@@ -240,6 +240,26 @@ function requestTimeoutSignal(signal, timeoutMs) {
   return signal ? AbortSignal.any([signal, timeout]) : timeout;
 }
 
+/**
+ * The DSH MCP bridge delivers `type: json` tool parameters as JSON-encoded
+ * strings, while in-process callers (tests, embedded agents) pass native
+ * objects. Accept both shapes so the strict contract validator always sees a
+ * parsed JSON value; malformed JSON text is rejected before any dispatch.
+ */
+function coerceJsonArgs(args) {
+  const out = { ...args };
+  for (const key of ['pathParams', 'query', 'headers', 'body']) {
+    const value = out[key];
+    if (value === undefined || typeof value !== 'string') continue;
+    try {
+      out[key] = JSON.parse(value);
+    } catch {
+      return { error: `${key}: is not valid JSON text` };
+    }
+  }
+  return { value: out };
+}
+
 export async function executeGeoOperation({ catalog, operationName, args, baseUrl, basePath = '', token, signal, fetchImpl = fetch, timeoutMs = 30_000 }) {
   const operation = catalog.operations[operationName];
   if (!operation) return { ok: false, outcome: 'rejected', error: `Operation '${operationName}' is not in the generated OpenAPI allowlist` };
@@ -247,6 +267,11 @@ export async function executeGeoOperation({ catalog, operationName, args, baseUr
     return { ok: false, outcome: 'rejected', error: 'This operation requires a dedicated constrained tool; use geo_upload_evidence for GEO evidence uploads.' };
   }
   if (!isPlainObject(args)) return { ok: false, outcome: 'rejected', error: 'Tool arguments must be an object' };
+  const jsonArgs = coerceJsonArgs(args);
+  if (jsonArgs.error) {
+    return { ok: false, outcome: 'rejected', error: 'Request does not match the canonical GEO OpenAPI contract', validationErrors: [jsonArgs.error] };
+  }
+  args = jsonArgs.value;
   const idemParam = operation.parameters.find(param => param.in === 'header' && param.name.toLowerCase() === 'x-idempotency-key');
   if (args.idempotencyKey !== undefined && !idemParam) {
     return { ok: false, outcome: 'rejected', error: 'This operation has no X-Idempotency-Key parameter' };

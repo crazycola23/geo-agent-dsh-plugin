@@ -187,3 +187,38 @@ test('GEO bearer credential is required and never returned to the model', async 
   assert.equal(result.outcome, 'rejected');
   assert.equal(calls, 0);
 });
+
+test('json parameters encoded as strings by the MCP bridge are parsed before validation', async () => {
+  let captured;
+  const result = await executeGeoOperation({
+    catalog: testCatalog(),
+    operationName: 'get_projects_by_projectid',
+    args: { pathParams: '{"projectId": 42}' },
+    baseUrl: 'https://geo.example',
+    token: 'secret-token-value',
+    fetchImpl: async (url) => {
+      captured = String(url);
+      return new Response(JSON.stringify({ code: 200, msg: 'ok', data: { id: 42 } }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    },
+  });
+  assert.equal(captured, 'https://geo.example/geo/projects/42');
+  assert.equal(result.outcome, 'complete');
+});
+
+test('string-encoded json parameters that are not valid JSON are rejected before dispatch', async () => {
+  let calls = 0;
+  const result = await executeGeoOperation({
+    catalog: testCatalog(),
+    operationName: 'get_projects_by_projectid',
+    args: { pathParams: '{"projectId": 42' },
+    baseUrl: 'https://geo.example',
+    token: 'secret-token-value',
+    fetchImpl: async () => { calls += 1; throw new Error('must not be called'); },
+  });
+  assert.equal(result.outcome, 'rejected');
+  assert.ok(result.validationErrors.some(error => error.includes('valid JSON')));
+  assert.equal(calls, 0);
+});
