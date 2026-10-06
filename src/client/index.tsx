@@ -2,7 +2,8 @@ import { useSyncExternalStore } from 'react'
 import type { ReactNode } from 'react'
 import type { Context } from '@deepseek-ai/cordis'
 import { GeoWorkbenchPage } from './GeoWorkbenchPage.tsx'
-import type { GeoWorkbenchPageProps, SessionsService } from './GeoWorkbenchPage.tsx'
+import type { GeoWorkbenchPageProps, GeoSessionProgressViewProps, SessionsService } from './GeoWorkbenchPage.tsx'
+import { GeoSessionProgressView } from './GeoWorkbenchPage.tsx'
 import { GeoSettingsCard } from './GeoSettingsCard.tsx'
 import { en, zh } from './locales.ts'
 
@@ -71,6 +72,16 @@ export function apply(rawContext: Context): void {
   ctx.inject(['sessions'], (scope) => {
     sessionsRef.current = (scope as { sessions?: SessionsService }).sessions
   })
+
+  // 会话视图标签：与「轨迹」同一插槽（conversation.view），按会话展示 GEO 流程进度。
+  ctx.effect(() => ctx.slots.inject('conversation.view', () => ctx.slots.register({
+    name: 'conversation.view',
+    id: 'geo-progress',
+    order: 15,
+    locale: LOCALE_NAMESPACE,
+    label: () => t('progress'),
+    inject: (sessionId: string) => ({ sessionId, sessions: sessionsRef.current }),
+  }, GeoSessionProgressView)), 'geo-workbench: conversation progress tab')
 
   ctx.inject(['configForms'], (scoped) => {
     try {

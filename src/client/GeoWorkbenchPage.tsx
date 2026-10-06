@@ -38,6 +38,11 @@ export interface GeoWorkbenchPageProps extends GeoSettingsCardProps {
   sessions?: SessionsService
 }
 
+export interface GeoSessionProgressViewProps {
+  sessionId?: string
+  sessions?: SessionsService
+}
+
 function stageActivity(view: StageView | undefined): number {
   return (view?.stages ?? []).reduce((total, stage) => total + (stage.calls > 0 ? 1 : 0), 0)
 }
@@ -103,6 +108,19 @@ function sameStages(left: StageView | undefined, right: StageView | undefined): 
   return a === b
 }
 
+/** 订阅单个会话的 geoWorkflow 投影；会话或服务不可用时保持空态。 */
+function useSessionGeoStage(sessions: SessionsService | undefined, sessionId: string | undefined): StageView | undefined {
+  const [view, setView] = useState<StageView | undefined>()
+  useEffect(() => {
+    if (!sessions || !sessionId) return
+    const store = sessions.binding(sessionId)?.session?.projections?.faceOf(PROJECTION_KEY)
+    if (!store) return
+    setView(store.getSnapshot())
+    return store.subscribe(() => setView(store.getSnapshot()))
+  }, [sessions, sessionId])
+  return view
+}
+
 /** 流程条：canonical 阶段顺序 + 三态；无 GEO 活动时给出一句空态。 */
 export function GeoStageStepper(props: { view?: StageView }): ReactNode {
   const { view } = props
@@ -131,6 +149,20 @@ export function GeoStageStepper(props: { view?: StageView }): ReactNode {
           : '当前阶段已完成；AI 进入下一步时会自动更新。'}
       </p>
     </div>
+  )
+}
+
+/** 会话视图标签页：与「轨迹」同级，展示当前会话的 GEO 流程进度。 */
+export function GeoSessionProgressView(props: GeoSessionProgressViewProps): ReactNode {
+  const { sessionId, sessions } = props
+  const view = useSessionGeoStage(sessions, sessionId)
+  return (
+    <section className={styles.page}>
+      <div className={styles.stepperCard}>
+        <h3 className={styles.heading}>GEO 流程进度</h3>
+        <GeoStageStepper view={view} />
+      </div>
+    </section>
   )
 }
 
