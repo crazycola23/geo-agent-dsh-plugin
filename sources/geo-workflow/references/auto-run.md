@@ -50,6 +50,7 @@
 - 资料上传：列出候选文件请操作者挑选，挑选结果即上传清单，逐个走 `geo_upload_evidence`（multipart 字段 `projectId`/`name`/`file`，X-Idempotency-Key 必带；小文件通常即时 PARSED）；
 - **事实确认是两段式（2026-10-06 实测）**：先 `post_facts_ai_extract/{runId}/candidates/{candidateId}/confirm`（body 必填 `scope`、`publicBoundary`，产生 `pending_confirm` 的修订），再 `post_fact_revisions/{id}/confirm`（body 必填 CAS `version`）——两步都完成才算已确认事实，两步都在 factConfirmPolicy 域；
 - **问题启用**：`post_questions_by_id_transition` 到 `enabled` 必须带 `targetPlatformIds`（至少一个，来自 `get_platforms`）和 CAS `version`；只有 `enabled` 的问题能进生成任务，否则报 GEO-40001「只能选择已启用的问题」；
+- 内容生成任务可带目标篇幅：`targetWordCountMin/Max`（integer 300-5000、成对提供、区间宽 200-3000；缺省 1200-1800）。决策单的生成项可按用途选档（快读速览 600-1000 / 标准深度 1200-1800 / 长篇权威 2000-3000），区间非法会被服务端直接拒绝——契约层只拦标量越界，宽度规则由服务端校验；
 - 执行中以 `geo_approval_policy` 读到的档位为准：`agent` 域的操作直接派发；`ask` 域的操作派发时会弹 DSH 审批，操作员拒绝即停该项并记入 VERIFY；
 - 每个 executed 项完成后在对话中记一行结果（对象 + 记录号）；`outcome=unknown` 按 workflow.md 幂等规则查证，不重投；
 - 任一依赖项失败：后续依赖项标记 blocked 并在 VERIFY 报告，不擅自改道。

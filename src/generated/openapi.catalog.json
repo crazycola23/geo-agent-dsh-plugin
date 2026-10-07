@@ -2,7 +2,7 @@
   "catalogVersion": 2,
   "source": {
     "file": "scrm-specs/30-contracts/08-openapi.yaml",
-    "sha256": "6b7e1a2d785a7b337f4e0b967a64903981bc9e0574e9687580de874fa020a464"
+    "sha256": "e4b74eda7e5839a5c824b1680d4e203d8ea252936295997b0503501e8a72fefe"
   },
   "serverPath": "/geo",
   "securitySchemes": {
@@ -7448,6 +7448,20 @@
           "minimum": 1,
           "maximum": 20,
           "description": "超过 20 返回单次任务最多生成20篇文章"
+        },
+        "targetWordCountMin": {
+          "type": "integer",
+          "minimum": 300,
+          "maximum": 5000,
+          "nullable": true,
+          "description": "目标篇幅下限（正文有效字数软约束，达标容差 ×0.80～×1.20）。为空使用默认 1200。允许 300～5000，与上限组成区间：宽度至少 200、至多 3000，且上限不得小于下限；创建/编辑时非法区间直接报错反馈（ContentWordCountPolicy.require），不静默改写用户输入"
+        },
+        "targetWordCountMax": {
+          "type": "integer",
+          "minimum": 300,
+          "maximum": 5000,
+          "nullable": true,
+          "description": "目标篇幅上限；为空使用默认 1800。区间规则同 targetWordCountMin；建议两字段成对提供（仅传其一可能因默认值组合出非法区间被拒绝）"
         },
         "executionMode": {
           "type": "string",
