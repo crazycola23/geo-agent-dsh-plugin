@@ -309,6 +309,60 @@ test('progress notes are capped, dropping the oldest, and blank text is ignored'
   assert.equal(stageView(state).stages.some(stage => stage.calls > 0), false);
 });
 
+test('clearing the progress page wipes stages, counters and notes but keeps the token status', () => {
+  let state = { inheritedEventCount: 0, lastSeq: 0, projectIds: [], approvals: {}, notes: [], tokens: {}, stages: {} };
+  // 先造一点进度：一次写操作、一条说明、一份令牌校验结果。
+  state = projectEvent(state, {
+    seq: 1,
+    type: 'tool/call',
+    data: { callId: 'w1', name: 'geo_api', arguments: JSON.stringify({ operation: 'post_fact_revisions_by_id_confirm', projectId: '2097157799925620737' }) },
+  }, { tagOf, isWrite });
+  state = projectEvent(state, {
+    seq: 2,
+    time: 1759820000000,
+    type: 'tool/call',
+    data: { callId: 'n1', name: 'geo_progress_note', arguments: JSON.stringify({ text: '第 2 轮执行收口', stage: 'fact' }) },
+  }, { tagOf, isWrite });
+  state = projectEvent(state, {
+    seq: 3,
+    type: 'tool/result',
+    data: {
+      message: { toolCallId: 'c-status' },
+      meta: { kind: 'connection', projectId: '2097157799925620737', authenticated: true, expiresAt: '2026-11-05', tokenName: '万事达', projectName: '测试小8' },
+    },
+  }, { tagOf, isWrite });
+  assert.equal(state.notes.length, 1);
+  assert.equal(stageView(state).stages.find(stage => stage.key === 'fact').writes, 1);
+  assert.equal(stageView(state).tokens.length, 1);
+
+  state = projectEvent(state, {
+    seq: 4,
+    type: 'tool/call',
+    data: { callId: 'c1', name: 'geo_clear_progress', arguments: JSON.stringify({ reason: '上一轮已收口' }) },
+  }, { tagOf, isWrite });
+
+  const cleared = stageView(state);
+  assert.equal(cleared.notes.length, 0, '进度说明清空');
+  assert.equal(cleared.stages.every(stage => stage.calls === 0 && stage.reads === 0 && stage.writes === 0), true, '计数归零');
+  assert.equal(cleared.stages.every(stage => stage.status === 'pending'), true, '八格回到待开始');
+  assert.equal(cleared.projects.length, 0, '项目列表也属于进度');
+  assert.equal(Object.keys(state.approvals ?? {}).length, 0);
+  assert.equal(state.lastSeq, 4, '清空自身也要推进 seq');
+  // 令牌状态是凭据诊断结论，不属于流程进度，清进度不该抹掉它。
+  assert.equal(cleared.tokens.length, 1);
+  assert.equal(cleared.tokens[0].authenticated, true);
+  assert.equal(cleared.tokens[0].expiresAt, '2026-11-05');
+
+  // 清空不是「冻结」：之后的事件照常累积。
+  state = projectEvent(state, {
+    seq: 5,
+    type: 'tool/call',
+    data: { callId: 'w2', name: 'geo_api', arguments: JSON.stringify({ operation: 'post_fact_revisions_by_id_confirm', projectId: '2097157799925620737' }) },
+  }, { tagOf, isWrite });
+  assert.equal(stageView(state).stages.find(stage => stage.key === 'fact').writes, 1, '清空后重新开始计数');
+  assert.equal(stageView(state).projects.length, 1);
+});
+
 test('a connection result carries the token status into the view, per project', () => {
   let state = { inheritedEventCount: 0, lastSeq: 0, projectIds: [], approvals: {}, notes: [], tokens: {}, stages: {} };
   state = projectEvent(state, {

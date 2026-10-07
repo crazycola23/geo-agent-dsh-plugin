@@ -40,6 +40,26 @@ export const GEO_EVIDENCE_OPERATION = 'post_evidence_sources_upload';
  */
 export const GEO_NOTE_TOOL = 'geo_progress_note';
 
+/**
+ * AI 清空进度页的工具名。运营员嫌历史进度碍事时会要这个：折叠到它就回到空白态。
+ * 它同样不是 GEO 目录操作，也不动 GEO 里的任何数据——清掉的只是进度页的展示
+ * 状态，原始调用记录仍在会话日志里（只是不再进视图）。
+ */
+export const GEO_CLEAR_TOOL = 'geo_clear_progress';
+
+/** 进度页的空白态：阶段、计数、说明、项目列表与审批映射全部归零。 */
+export function emptyProgressState(inheritedEventCount = 0) {
+  return {
+    inheritedEventCount: Number(inheritedEventCount) || 0,
+    lastSeq: 0,
+    projectIds: [],
+    approvals: {},
+    notes: [],
+    tokens: {},
+    stages: {},
+  };
+}
+
 /** 单条说明的字数上限：一句话说清结论，不写过程。 */
 const NOTE_TEXT_LIMIT = 200;
 
@@ -262,6 +282,16 @@ export function foldApprovalDecided(state, { callId, outcome }) {
 
 /** 事件折叠的单一入口：投影 apply 与回归测试共用同一条路径。 */
 export function projectEvent(state, event, { tagOf, isWrite }) {
+  // 清空进度页。放在分支最前：清空之后再来的事件照常累积，而清空之前的事件
+  // 不再进视图——重放同一个会话时它仍然停在时间流里的同一位置，语义稳定。
+  if (event?.type === 'tool/call' && event.data?.name === GEO_CLEAR_TOOL) {
+    return {
+      ...emptyProgressState(state.inheritedEventCount),
+      // 令牌状态是「凭据是否有效」的诊断结论，不属于流程进度，清进度不该抹掉它。
+      tokens: state.tokens ?? {},
+      lastSeq: typeof event.seq === 'number' ? event.seq : state.lastSeq,
+    };
+  }
   // 进度说明：AI 主动写，先于目录操作分支，因为它不属于任何阶段。
   if (event?.type === 'tool/call' && event.data?.name === GEO_NOTE_TOOL) {
     const args = parseCallArguments(event.data.arguments);

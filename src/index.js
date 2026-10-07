@@ -8,7 +8,7 @@ import { executeGeoOperation, executeGeoEvidenceUpload, executeGeoArticleExport,
 import { Config, pluginSettings } from './config.js';
 import { resolveProjectSelection } from './project-context.js';
 import { schemaSummary } from './schema.js';
-import { emptyStageState, foldToolCall, foldToolResult, GEO_EVIDENCE_OPERATION, projectEvent, stageView } from './stages.js';
+import { emptyProgressState, emptyStageState, foldToolCall, foldToolResult, GEO_EVIDENCE_OPERATION, projectEvent, stageView } from './stages.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const catalog = JSON.parse(readFileSync(resolve(here, 'generated', 'openapi.catalog.json'), 'utf8'));
@@ -27,6 +27,7 @@ const toolNames = [
   'geo_upload_evidence',
   'geo_export_article',
   'geo_progress_note',
+  'geo_clear_progress',
   'geo_connection_status',
   'geo_approval_policy',
   'ask_user_question',
@@ -366,6 +367,20 @@ export function apply(ctx, config = {}) {
     },
   }));
 
+  // 清空进度页：运营员说「上面这些进度可以删了」时用它。它只清进度页的展示状态
+  // （阶段、写/只读计数、进度说明），不动 GEO 里的任何数据，也不动令牌状态——
+  // 原始调用记录仍在会话日志里，只是不再进视图。
+  ctx.tools.register(defineGeoTool({
+    name: 'geo_clear_progress',
+    description: '把 GEO 进度页清空：阶段状态、写/只读计数与进度说明全部归零。只清展示状态，不改 GEO 里的任何数据，也不影响令牌状态。运营员嫌历史进度碍事、或一轮作业已收口要开新一轮时使用。',
+    parameters: {
+      reason: { type: 'string', description: '可选。清空的原因（例如「上一轮已收口」），只用于回执说明。' },
+    },
+    async execute({ reason }) {
+      return { cleared: true, reason: typeof reason === 'string' ? reason : '' };
+    },
+  }));
+
   ctx.tools.register(defineGeoTool({
     name: 'geo_connection_status',
     description: '校验某个已配置项目的访问令牌，并报告它绑定的项目、令牌名、权限清单和有效期；不会显示令牌本身。',
@@ -477,15 +492,7 @@ export function apply(ctx, config = {}) {
           rejectionReason: z.string(),
         })),
       }),
-      init: (_header, inheritedEventCount) => ({
-        inheritedEventCount: Number(inheritedEventCount) || 0,
-        lastSeq: 0,
-        projectIds: [],
-        approvals: {},
-        notes: [],
-        tokens: {},
-        stages: {},
-      }),
+      init: (_header, inheritedEventCount) => emptyProgressState(inheritedEventCount),
       // 折叠语义已变（字符串实参 / 只读不推进 / 结果取自 meta / 消费审批事件 /
       // 新增 AI 主动写的进度说明与令牌状态），stateVersion 必须递增：否则旧的
       // 持久化检查点行会被 forward-apply 成缺字段的垃圾状态
