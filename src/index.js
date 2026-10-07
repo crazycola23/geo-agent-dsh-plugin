@@ -366,6 +366,17 @@ export function apply(ctx, config = {}) {
         catalogDigest: catalog.source.sha256,
       };
     },
+    // 令牌状态进投影：有效期只有 GEO 服务端知道，而客户端读不到凭据值、也不能
+    // 调 host 工具。presentationMeta → tool/result.meta 是本插件唯一能主动写进
+    // 会话日志的正规通道，投影据此把「上次校验到的有效期」带给界面。
+    presentationMeta: (_args, value) => ({
+      kind: 'connection',
+      projectId: typeof value?.projectId === 'string' ? value.projectId : '',
+      expiresAt: typeof value?.expiresAt === 'string' ? value.expiresAt : '',
+      tokenName: typeof value?.tokenName === 'string' ? value.tokenName : '',
+      projectName: typeof value?.projectName === 'string' ? value.projectName : '',
+      authenticated: value?.authenticated === true,
+    }),
   }));
 
   ctx.tools.register(defineGeoTool({
@@ -421,6 +432,13 @@ export function apply(ctx, config = {}) {
           stageKey: z.string(),
           text: z.string(),
         })),
+        tokens: z.record(z.string(), z.strictObject({
+          expiresAt: z.string(),
+          tokenName: z.string(),
+          projectName: z.string(),
+          authenticated: z.boolean(),
+          checkedAt: z.number(),
+        })),
         stages: z.record(z.string(), z.strictObject({
           calls: z.number().int().min(0),
           reads: z.number().int().min(0),
@@ -438,6 +456,7 @@ export function apply(ctx, config = {}) {
         projectIds: [],
         approvals: {},
         notes: [],
+        tokens: {},
         stages: {},
       }),
       // 折叠语义已变（字符串实参 / 只读不推进 / 结果取自 meta / 消费审批事件 /
@@ -472,10 +491,18 @@ export function apply(ctx, config = {}) {
             stageLabel: z.string(),
             text: z.string(),
           })),
+          tokens: z.array(z.strictObject({
+            projectId: z.string(),
+            expiresAt: z.string(),
+            tokenName: z.string(),
+            projectName: z.string(),
+            authenticated: z.boolean(),
+            checkedAt: z.number(),
+          })),
         }),
         view: (state) => stageView(state),
       },
-      stateVersion: 4,
+      stateVersion: 5,
     });
   });
 }

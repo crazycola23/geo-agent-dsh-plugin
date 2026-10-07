@@ -293,6 +293,26 @@ export function projectEvent(state, event, { tagOf, isWrite }) {
   }
   if (event?.type === 'tool/result') {
     const meta = event.data?.meta;
+    // 令牌校验结果（geo_connection_status 自报）：有效期只有服务端知道，
+    // 界面读不到凭据值也调不动 host 工具，所以借会话日志把「上次校验到的
+    // 令牌状态」带走。按 projectId 存，多项目各留一份。
+    if (meta && meta.kind === 'connection') {
+      const projectId = typeof meta.projectId === 'string' && meta.projectId !== '' ? meta.projectId : '';
+      if (projectId === '') return state;
+      return {
+        ...state,
+        tokens: {
+          ...(state.tokens ?? {}),
+          [projectId]: {
+            expiresAt: typeof meta.expiresAt === 'string' ? meta.expiresAt : '',
+            tokenName: typeof meta.tokenName === 'string' ? meta.tokenName : '',
+            projectName: typeof meta.projectName === 'string' ? meta.projectName : '',
+            authenticated: meta.authenticated === true,
+            checkedAt: typeof event.time === 'number' ? event.time : 0,
+          },
+        },
+      };
+    }
     return foldToolResult(state, {
       callId: event.data?.message?.toolCallId,
       outcome: meta && typeof meta.outcome === 'string' ? meta.outcome : 'unknown',
@@ -361,6 +381,15 @@ export function stageView(stageState) {
   return {
     stages,
     projects: [...(stageState?.projectIds ?? [])],
+    // 令牌状态（上次校验到的）：按 projectId 列出，界面据此提示有效期与临期。
+    tokens: Object.entries(stageState?.tokens ?? {}).map(([projectId, token]) => ({
+      projectId,
+      expiresAt: token?.expiresAt ?? '',
+      tokenName: token?.tokenName ?? '',
+      projectName: token?.projectName ?? '',
+      authenticated: token?.authenticated === true,
+      checkedAt: token?.checkedAt ?? 0,
+    })),
     // 新的在前：运营员先看最近发生了什么。
     notes: [...(stageState?.notes ?? [])].reverse().map(note => ({
       at: note.at,

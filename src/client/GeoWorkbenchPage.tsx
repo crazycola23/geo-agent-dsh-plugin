@@ -22,7 +22,33 @@ type NoteRow = {
   stageLabel?: string
   text: string
 }
-type StageView = { stages?: StageRow[]; projects?: string[]; notes?: NoteRow[] }
+type TokenStatus = {
+  projectId: string
+  expiresAt: string
+  tokenName?: string
+  projectName?: string
+  authenticated: boolean
+  checkedAt: number
+}
+type StageView = { stages?: StageRow[]; projects?: string[]; notes?: NoteRow[]; tokens?: TokenStatus[] }
+
+/**
+ * 令牌状态概要到人读文案：有效期 + 剩余天数 + 临期/过期告警。
+ * 数据来自上一次真实校验——没校验过就说没校验过，不猜一个日期出来。
+ */
+export function tokenSummary(token: TokenStatus | undefined): { text: string; level: 'ok' | 'warn' | 'expired' | 'unknown' } {
+  const raw = token?.expiresAt
+  if (!raw) return { text: '调用一次连接校验后显示', level: 'unknown' }
+  const expires = new Date(raw)
+  if (Number.isNaN(expires.getTime())) return { text: '有效期格式无法识别', level: 'unknown' }
+  const month = String(expires.getMonth() + 1).padStart(2, '0')
+  const day = String(expires.getDate()).padStart(2, '0')
+  const date = `${expires.getFullYear()}-${month}-${day}`
+  const days = Math.ceil((expires.getTime() - Date.now()) / 86_400_000)
+  if (days < 0) return { text: `${date} 已过期`, level: 'expired' }
+  // 7 天内提前示警：令牌一过期，该项目上所有 GEO 调用都会失败。
+  return { text: `${date}（剩 ${days} 天）`, level: days <= 7 ? 'warn' : 'ok' }
+}
 
 /** 说明条目的时间戳：只显示到分钟——运营员看的是先后，不是精确到秒。 */
 function formatNoteTime(at?: number): string {
@@ -181,7 +207,7 @@ function operationLabel(operation: string | undefined): string {
  * 订阅所有可见会话的 geoWorkflow 投影，挑出「正在跑或最近跑过 GEO」的那个。
  * 订阅本身是扇入式的：任何会话的投影变化都会触发一次重新挑选。
  */
-function useLatestGeoStage(sessions: SessionsService | undefined): StageView | undefined {
+export function useLatestGeoStage(sessions: SessionsService | undefined): StageView | undefined {
   const [view, setView] = useState<StageView | undefined>()
   useEffect(() => {
     if (!sessions) return
@@ -233,9 +259,14 @@ function useLatestGeoStage(sessions: SessionsService | undefined): StageView | u
 
 function sameStages(left: StageView | undefined, right: StageView | undefined): boolean {
   if (left === right) return true
-  const a = JSON.stringify(left?.stages ?? [])
-  const b = JSON.stringify(right?.stages ?? [])
-  return a === b
+  // notes 与 tokens 也必须参与比较：只比 stages 会让「写了一条说明」或
+  // 「拿到令牌有效期」这种纯附加更新被判定为无变化，界面不刷新。
+  const shape = (view: StageView | undefined): string => JSON.stringify({
+    stages: view?.stages ?? [],
+    notes: view?.notes ?? [],
+    tokens: view?.tokens ?? [],
+  })
+  return shape(left) === shape(right)
 }
 
 /** 订阅单个会话的 geoWorkflow 投影；会话或服务不可用时保持空态。 */

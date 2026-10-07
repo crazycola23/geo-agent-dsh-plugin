@@ -488,3 +488,36 @@
   outline: 2px solid var(--dsw-alias-state-business-primary, #4f8cff);
   outline-offset: 1px;
 }
+
+/* 令牌有效期：数据来自 GEO 服务端的上一次真实校验。令牌一过期，该项目上所有
+   GEO 调用都会失败，所以临期与过期必须一眼可见，未校验则保持低调。 */
+.tokenExpiry {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.tokenExpiryLabel {
+  flex: none;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.tokenExpiryValue {
+  color: var(--dsw-alias-label-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.tokenExpiry[data-level='warn'] .tokenExpiryValue {
+  color: var(--dsw-alias-state-warn-label);
+  font-weight: 600;
+}
+
+.tokenExpiry[data-level='expired'] .tokenExpiryValue {
+  color: var(--dsw-alias-state-error-primary);
+  font-weight: 600;
+}
+
+.tokenExpiry[data-level='unknown'] .tokenExpiryValue {
+  color: var(--dsw-alias-label-caption);
+}

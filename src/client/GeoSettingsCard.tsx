@@ -3,6 +3,10 @@ import type { ReactNode } from 'react'
 import type { en } from './locales.ts'
 // 凭据 ref 与项目 ID 规则必须与插件运行时同源（两处各写一份曾互为漂移隐患）。
 import { normalizeProjectId, projectCredentialRefs } from '../project-context.js'
+// 令牌有效期只有 GEO 服务端知道，客户端读不到凭据值也不能调 host 工具；
+// 这里复用工作台页的会话投影订阅，拿上一次真实校验留下的令牌状态。
+import { tokenSummary, useLatestGeoStage } from './GeoWorkbenchPage.tsx'
+import type { SessionsService, TokenStatus } from './GeoWorkbenchPage.tsx'
 import styles from './geo-settings.module.css'
 
 type CredentialInfo = { configured?: boolean; writable?: boolean; source?: string }
@@ -40,6 +44,8 @@ export interface GeoSettingsCardProps {
   useSnapshot: () => ScopeSnapshot
   t: (key: keyof typeof en) => string
   credentials?: CredentialRemote
+  /** 软依赖：宿主没提供时，令牌有效期一栏退化为「未校验」，其余照常。 */
+  sessions?: SessionsService
 }
 
 function normalizeBasePathInput(input: string): string {
@@ -156,9 +162,14 @@ function CredentialState(props: { label: string; info?: CredentialInfo }): React
 }
 
 export function GeoSettingsCard(props: GeoSettingsCardProps): ReactNode {
-  const { scope, useSnapshot, t, credentials } = props
+  const { scope, useSnapshot, t, credentials, sessions } = props
   const snapshot = useSnapshot()
   const value = snapshot.value ?? {}
+  // 令牌有效期按项目取：数据来自该会话里最近一次 geo_connection_status 的真实结果。
+  const geoView = useLatestGeoStage(sessions)
+  const tokenByProject = new Map<string, TokenStatus>(
+    (geoView?.tokens ?? []).map(token => [token.projectId, token]),
+  )
   const [expanded, setExpanded] = useState(true)
   const [apiBaseUrl, setApiBaseUrl] = useState(value.apiBaseUrl ?? '')
   const [apiBasePath, setApiBasePath] = useState(value.apiBasePath ?? '')
@@ -509,6 +520,7 @@ export function GeoSettingsCard(props: GeoSettingsCardProps): ReactNode {
               const refs = validProjectId(projectId) ? projectCredentialRefs(projectId) : undefined
               const tokenInfo = refs ? credentialState[refs.apiToken] : undefined
               const externalManaged = tokenInfo?.writable === false
+              const expiry = tokenSummary(tokenByProject.get(projectId))
               return (
                 <div className={styles.projectCard} key={project.draftKey} data-testid={`geo-project-row-${index}`}>
                   <div className={styles.projectHeader}>
@@ -550,6 +562,16 @@ export function GeoSettingsCard(props: GeoSettingsCardProps): ReactNode {
                     disabled={busy || tokenInfo?.writable === false}
                     onChange={(next) => updateProject(project.draftKey, 'apiToken', next)}
                   />
+                  {/* 有效期来自 GEO 服务端的上一次真实校验；没校验过就明说「未校验」，
+                      不推一个日期出来——令牌过期会让该项目上所有 GEO 调用失效。 */}
+                  <div
+                    className={styles.tokenExpiry}
+                    data-level={expiry.level}
+                    data-testid={`geo-project-token-expiry-${index}`}
+                  >
+                    <span className={styles.tokenExpiryLabel}>令牌有效期</span>
+                    <span className={styles.tokenExpiryValue}>{expiry.text}</span>
+                  </div>
                   {confirmRemoveKey === project.draftKey ? (
                     <div className={styles.confirmRow}>
                       <span>移除该项目后，保存时会一并清理已保存的访问令牌。继续吗？</span>
