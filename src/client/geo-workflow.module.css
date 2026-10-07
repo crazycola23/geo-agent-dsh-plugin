@@ -104,6 +104,40 @@
   color: var(--dsw-alias-label-secondary, #4b5563);
 }
 
+/* 被拒：与「进行中」明确区分，别让失败读成正在推进。 */
+.stepFailed .dot {
+  border: 1px solid transparent;
+  background: #dc2626;
+  color: var(--dsh-alias-label-primary-foreground, #fff);
+  font-weight: 700;
+}
+
+.stepFailed .stepLabel {
+  color: #dc2626;
+  font-weight: 600;
+}
+
+/* 待查证：结果未知，不得与完成混淆。 */
+.stepUnknown .dot {
+  border: 1px solid #d97706;
+  background: color-mix(in srgb, #d97706 16%, transparent);
+  color: #b45309;
+  font-weight: 700;
+}
+
+.stepUnknown .stepLabel {
+  color: #b45309;
+  font-weight: 600;
+}
+
+.caption[data-status="failed"] {
+  color: #dc2626;
+}
+
+.caption[data-status="unknown"] {
+  color: #b45309;
+}
+
 .caption {
   margin: 0;
   color: var(--dsw-alias-label-secondary, #4b5563);

@@ -1,10 +1,23 @@
 /**
- * GEO 业务阶段表与「操作 → 阶段」映射。
+ * GEO 业务阶段表、「操作 → 阶段」映射与会话投影折叠。
  *
- * <p>会话投影（见 index.js 的 geoWorkflow projection）用纯前缀匹配把
- * geo_api / geo_upload_evidence 的每次调用折进一个阶段，阶段顺序即
- * workflow.md 的作业步骤；前缀来自操作名去掉 method 前缀后的首段，
- * 不依赖 catalog tag，契约重排不会悄悄改阶段。</p>
+ * <p>会话投影（见 index.js 的 geoWorkflow projection）把 geo_api /
+ * geo_upload_evidence 的每次调用折进一个阶段，阶段顺序即 workflow.md 的
+ * 作业步骤；前缀来自操作名去掉 method 前缀后的首段，不依赖 catalog tag，
+ * 契约重排不会悄悄改阶段。</p>
+ *
+ * <p>三条语义纪律（2026-10-07 修复）：</p>
+ * <ul>
+ *   <li><b>tool/call.arguments 是字符串</b>。DSH 会话事件的 type 定义写明它是
+ *       「模型原样产出的 arguments JSON 字符串（未解析）」，日志里也是字符串。
+ *       按对象读 `.operation` 会恒为 undefined，使整条 geo_api 进度失效。</li>
+ *   <li><b>只读调用不推进阶段</b>。ANALYZE 全程是只读探测；若让 GET 也点亮阶段，
+ *       一次纯感知就会显示成「全流程完成」。只读只累计 reads。</li>
+ *   <li><b>结果语义来自工具自报的 meta</b>，不是「没有 error 就算成功」。
+ *       GEO 工具把业务失败编码进返回值（{ ok:false, outcome:'rejected' }）
+ *       而不抛错，因此 <code>tool/result.error</code> 恒缺席。meta 缺席时一律
+ *       按 unknown 收敛——未知不得谎报成功。</li>
+ * </ul>
  */
 
 export const STAGES = [
@@ -17,6 +30,9 @@ export const STAGES = [
   { key: 'detect', label: '检测' },
   { key: 'report', label: '报告' },
 ];
+
+/** geo_upload_evidence 是目录外的专用工具，投影里映射到这个等价写操作。 */
+export const GEO_EVIDENCE_OPERATION = 'post_evidence_sources_upload';
 
 const STAGE_BY_KEY = new Map(STAGES.map(stage => [stage.key, stage]));
 
@@ -76,75 +92,148 @@ export function stageOfOperation(operationName, tag) {
   return undefined;
 }
 
-/** 一个阶段的空状态。 */
+/**
+ * 会话事件里的工具实参形态归一。
+ * 事件侧永远是字符串；对象形态只出现在 tools/pre-execute 的审批路径与测试桩里，
+ * 两种都收，否则投影会对同一输入给出两种答案。
+ */
+export function parseCallArguments(rawArguments) {
+  if (typeof rawArguments === 'string') {
+    try {
+      const parsed = JSON.parse(rawArguments);
+      return parsed !== null && typeof parsed === 'object' ? parsed : {};
+    } catch {
+      return {};
+    }
+  }
+  if (rawArguments !== null && typeof rawArguments === 'object') return rawArguments;
+  return {};
+}
+
+/** 一个阶段的空状态。outcome 为 '' 表示「最近一次写的结果还没回来」。 */
 export function emptyStageState() {
-  return { calls: 0, lastOp: '', lastCallId: '', done: false };
+  return { calls: 0, reads: 0, writes: 0, lastOp: '', lastCallId: '', outcome: '' };
+}
+
+/** 收敛已知的三个结果码；其它一律按 unknown（未知不得当成成功）。 */
+export function normalizeOutcome(outcome) {
+  return outcome === 'complete' || outcome === 'rejected' || outcome === 'unknown'
+    ? outcome
+    : 'unknown';
+}
+
+function readCallMeta(event) {
+  const data = event?.data;
+  if (!data || (data.name !== 'geo_api' && data.name !== 'geo_upload_evidence')) return undefined;
+  const args = parseCallArguments(data.arguments);
+  const operation = data.name === 'geo_upload_evidence' ? GEO_EVIDENCE_OPERATION : args.operation;
+  if (typeof operation !== 'string' || operation === '') return undefined;
+  return { operation, projectId: typeof args.projectId === 'string' ? args.projectId : '' };
 }
 
 /**
- * 把一次 tool/call 折进阶段状态；目录外操作原样返回 state。
- * state 形如 { stages: { key: stageState }, lastSeq }，由调用方持有。
+ * 把一次 tool/call 事件折进阶段状态。只读调用累计 reads 但不改写计数与 outcome，
+ * 因此一次纯感知不会把阶段点亮成「已完成」。
  */
-export function foldToolCall(state, { callId, operation, tag, seq }) {
+export function foldToolCall(state, { callId, operation, tag, seq, projectId, isWrite }) {
   const stageKey = stageOfOperation(operation, tag);
   if (!stageKey) return state;
   const current = state.stages[stageKey] ?? emptyStageState();
+  const write = isWrite !== false;
+  const projects = projectId && !(state.projectIds ?? []).includes(projectId)
+    ? [...(state.projectIds ?? []), projectId]
+    : state.projectIds ?? [];
   return {
     ...state,
-    lastSeq: seq,
+    lastSeq: typeof seq === 'number' ? seq : state.lastSeq,
+    projectIds: projects,
     stages: {
       ...state.stages,
       [stageKey]: {
         calls: current.calls + 1,
+        reads: current.reads + (write ? 0 : 1),
+        writes: current.writes + (write ? 1 : 0),
         lastOp: typeof operation === 'string' ? operation : current.lastOp,
         lastCallId: typeof callId === 'string' ? callId : current.lastCallId,
-        // 重新进入该阶段即视为未完成，结果到达时再收敛。
-        done: false,
+        // 重新进入该阶段即视为未收敛，结果到达时再定终态。
+        outcome: '',
       },
     },
   };
 }
 
 /**
- * 把一次 tool/result 折进阶段状态：只有该阶段最近一次调用成功收尾时
- * 才把阶段标成 done（「AI 做完了就更新」）；失败与未知结果不标。
+ * 把一次 tool/result 事件折进阶段状态。只收敛该阶段最近一次**写**调用；
+ * 只读调用不改 outcome，meta 缺席按 unknown 落定。
  */
-export function foldToolResult(state, { callId, ok = true }) {
+export function foldToolResult(state, { callId, outcome }) {
   if (typeof callId !== 'string' || callId === '') return state;
-  if (!ok) return state;
-  const stageKey = Object.keys(state.stages)
-    .find(key => state.stages[key]?.lastCallId === callId);
-  if (!stageKey) return state;
+  const stageKey = Object.keys(state.stages).find(key => state.stages[key]?.lastCallId === callId);
+  if (stageKey === undefined) return state;
   const stage = state.stages[stageKey];
-  if (stage.done) return state;
-  return { ...state, stages: { ...state.stages, [stageKey]: { ...stage, done: true } } };
+  if (stage.writes === 0) return state;
+  if (stage.outcome !== '') return state;
+  return {
+    ...state,
+    stages: { ...state.stages, [stageKey]: { ...stage, outcome: normalizeOutcome(outcome) } },
+  };
+}
+
+/** 事件折叠的单一入口：投影 apply 与回归测试共用同一条路径。 */
+export function projectEvent(state, event, { tagOf, isWrite }) {
+  if (event?.type === 'tool/call') {
+    const call = readCallMeta(event);
+    if (!call) return state;
+    return foldToolCall(state, {
+      callId: event.data.callId,
+      operation: call.operation,
+      tag: typeof tagOf === 'function' ? tagOf(call.operation) : undefined,
+      projectId: call.projectId,
+      isWrite: typeof isWrite === 'function' ? isWrite(call.operation) : true,
+      seq: event.seq,
+    });
+  }
+  if (event?.type === 'tool/result') {
+    const meta = event.data?.meta;
+    return foldToolResult(state, {
+      callId: event.data?.message?.toolCallId,
+      outcome: meta && typeof meta.outcome === 'string' ? meta.outcome : 'unknown',
+    });
+  }
+  return state;
 }
 
 /**
- * 派生面向客户端的视图：canonical 顺序 + 三态
- * （pending 待开始 / active 进行中 / done 已完成）。
- * 更晚阶段有过调用，会把更早阶段视为已完成——即使结果还没回来。
+ * 派生面向客户端的视图：canonical 顺序 + 五态
+ * （pending 待开始 / active 进行中 / done 已完成 / failed 被拒 / unknown 待查证）。
+ * 阶段状态只由写操作决定；更晚阶段发生过写操作时，把仍 active 的更早阶段
+ * 视为已越过，但 failed / unknown 不会被掩盖。
  */
 export function stageView(stageState) {
-  const stages = STAGES.map(stage => {
-    const touched = stageState?.stages?.[stage.key];
+  const touched = stageState?.stages ?? {};
+  const rows = STAGES.map(stage => {
+    const current = touched[stage.key];
     return {
       key: stage.key,
       label: stage.label,
-      status: 'pending',
-      calls: touched?.calls ?? 0,
-      lastOp: touched?.lastOp ?? '',
+      calls: current?.calls ?? 0,
+      reads: current?.reads ?? 0,
+      writes: current?.writes ?? 0,
+      lastOp: current?.lastOp ?? '',
+      outcome: current?.outcome ?? '',
     };
   });
-  let activeIndex = -1;
-  stages.forEach((stage, index) => {
-    if (stage.calls > 0) activeIndex = index;
+  let furthestWrite = -1;
+  rows.forEach((row, index) => { if (row.writes > 0) furthestWrite = index; });
+  const stages = rows.map((row, index) => {
+    let status;
+    if (row.writes === 0) status = 'pending';
+    else if (row.outcome === 'complete') status = 'done';
+    else if (row.outcome === 'rejected') status = 'failed';
+    else if (row.outcome === 'unknown') status = 'unknown';
+    else status = 'active';
+    if (status === 'active' && furthestWrite > index) status = 'done';
+    return { ...row, status };
   });
-  stages.forEach((stage, index) => {
-    if (stage.calls === 0) return;
-    const touched = stageState?.stages?.[stage.key];
-    const superseded = activeIndex > index;
-    stage.status = touched?.done || superseded ? 'done' : 'active';
-  });
-  return { stages };
+  return { stages, projects: [...(stageState?.projectIds ?? [])] };
 }

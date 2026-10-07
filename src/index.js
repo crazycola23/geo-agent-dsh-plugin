@@ -8,7 +8,7 @@ import { executeGeoOperation, executeGeoEvidenceUpload, listStagedEvidenceFiles,
 import { Config, pluginSettings } from './config.js';
 import { resolveProjectSelection } from './project-context.js';
 import { schemaSummary } from './schema.js';
-import { emptyStageState, foldToolCall, foldToolResult, stageView } from './stages.js';
+import { emptyStageState, foldToolCall, foldToolResult, GEO_EVIDENCE_OPERATION, projectEvent, stageView } from './stages.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const catalog = JSON.parse(readFileSync(resolve(here, 'generated', 'openapi.catalog.json'), 'utf8'));
@@ -179,16 +179,39 @@ export async function geoApprovalDecision(execution, next, apiCatalog = catalog,
 function defineGeoTool(definition) {
   return defineTool({
     ...definition,
-    output: jsonOutput(),
+    output: jsonOutput(definition.presentationMeta),
     execute: async (...args) => stripUndefined(await definition.execute(...args)),
   });
 }
 
-function jsonOutput() {
+/**
+ * `presentationMeta` 的返回值会随会话日志持久化到 `tool/result.meta`
+ * （dsh-tools：`exec.parent === undefined` 时投影，注释见
+ * lib/types/presentation.d.ts）。会话投影据此拿到**结构化**的结果语义，
+ * 不必从模型可见的 content 文本里反解 JSON —— GEO 的业务失败
+ * （{ ok:false, outcome:'rejected' }）不会抛错，因此 `tool/result.error`
+ * 恒缺席，只看 error 会把每一次被拒都记成成功。
+ *
+ * projector 抛错会让整次工具调用失败，所以这里只做纯取值、绝不抛。
+ */
+function jsonOutput(presentationMeta) {
   return {
     schema: { type: 'json' },
     render: (_args, value) => [{ type: 'text', text: JSON.stringify(value, null, 2) }],
+    ...(typeof presentationMeta === 'function' ? { presentationMeta } : {}),
   };
+}
+
+/** 结果语义投影的公共形状：outcome 是 GEO 自己的三态，不做推断。 */
+function geoResultMeta(kind, readOperation, readProjectId) {
+  return (args, value) => ({
+    kind,
+    operation: readOperation(args),
+    projectId: readProjectId(args),
+    outcome: typeof value?.outcome === 'string' ? value.outcome : 'unknown',
+    ok: value?.ok === true,
+    httpStatus: typeof value?.status === 'number' ? value.status : null,
+  });
 }
 
 /** Deep-copy a JSON-shaped value, omitting own keys whose value is `undefined`. */
@@ -241,6 +264,11 @@ export function apply(ctx, config = {}) {
       const { projectId: _authProjectId, ...requestArgs } = args;
       return executeWithGeoProjectToken(auth, selection.projectId, token => executeGeoOperation({ catalog, operationName: args.operation, args: requestArgs, baseUrl: settings.baseUrl, basePath: settings.basePath, token, signal: exec.signal, timeoutMs: settings.timeoutMs }), settings);
     },
+    presentationMeta: geoResultMeta(
+      'geo_api',
+      args => (typeof args?.operation === 'string' ? args.operation : ''),
+      args => (typeof args?.projectId === 'string' ? args.projectId : ''),
+    ),
   }));
 
   ctx.tools.register(defineGeoTool({
@@ -280,6 +308,11 @@ export function apply(ctx, config = {}) {
       const settings = currentSettings();
       return executeWithGeoProjectToken(auth, args.projectId, token => executeGeoEvidenceUpload({ catalog, args, evidenceDirectory: settings.evidenceDirectory, baseUrl: settings.baseUrl, basePath: settings.basePath, token, signal: exec.signal, timeoutMs: settings.timeoutMs }), settings);
     },
+    presentationMeta: geoResultMeta(
+      'geo_upload_evidence',
+      () => GEO_EVIDENCE_OPERATION,
+      args => (typeof args?.projectId === 'string' ? args.projectId : ''),
+    ),
   }));
 
 
@@ -348,36 +381,31 @@ export function apply(ctx, config = {}) {
       stateSchema: Schema.object({
         inheritedEventCount: Schema.number().int().min(0),
         lastSeq: Schema.number().int().min(0),
+        projectIds: Schema.array(Schema.string()),
         stages: Schema.dict(Schema.object({
           calls: Schema.number().int().min(0),
+          reads: Schema.number().int().min(0),
+          writes: Schema.number().int().min(0),
           lastOp: Schema.string(),
           lastCallId: Schema.string(),
-          done: Schema.boolean(),
+          outcome: Schema.string(),
         }).strict()),
       }).strict(),
       init: (_header, inheritedEventCount) => ({
         inheritedEventCount: Number(inheritedEventCount) || 0,
         lastSeq: 0,
+        projectIds: [],
         stages: {},
       }),
+      // 折叠语义已变（字符串实参 / 只读不推进 / 结果取自 meta），
+      // stateVersion 必须递增：否则旧的持久化检查点行会被 forward-apply
+      // 成缺字段的垃圾状态（dsh-session-projection 契约）。
       apply: (state, event) => {
         if (event.seq < state.inheritedEventCount) return state;
-        if (event.type === 'tool/call') {
-          if (event.data?.name !== 'geo_api' && event.data?.name !== 'geo_upload_evidence') return state;
-          const operation = event.data.name === 'geo_upload_evidence'
-            ? 'post_evidence_sources_upload'
-            : event.data.arguments?.operation;
-          return foldToolCall(state, {
-            callId: event.data.callId,
-            operation,
-            tag: typeof operation === 'string' ? catalog.operations[operation]?.tag : undefined,
-            seq: event.seq,
-          });
-        }
-        if (event.type === 'tool/result') {
-          return foldToolResult(state, { callId: event.data?.message?.toolCallId, ok: !event.data?.error });
-        }
-        return state;
+        return projectEvent(state, event, {
+          tagOf: operation => catalog.operations[operation]?.tag,
+          isWrite: operation => isWriteOperation(catalog, operation),
+        });
       },
       wire: {
         viewSchema: Schema.object({
@@ -386,12 +414,16 @@ export function apply(ctx, config = {}) {
             label: Schema.string(),
             status: Schema.string(),
             calls: Schema.number(),
+            reads: Schema.number(),
+            writes: Schema.number(),
             lastOp: Schema.string(),
+            outcome: Schema.string(),
           }).strict()),
+          projects: Schema.array(Schema.string()),
         }).strict(),
         view: (state) => stageView(state),
       },
-      stateVersion: 1,
+      stateVersion: 2,
     });
   });
 }

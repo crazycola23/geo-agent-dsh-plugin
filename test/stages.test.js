@@ -1,9 +1,38 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { emptyStageState, foldToolCall, foldToolResult, stageOfOperation, stageView } from '../src/stages.js';
+import {
+  emptyStageState,
+  foldToolCall,
+  foldToolResult,
+  normalizeOutcome,
+  parseCallArguments,
+  projectEvent,
+  stageOfOperation,
+  stageView,
+} from '../src/stages.js';
+
+const tagOf = operation => ({
+  get_projects_by_projectid: 'project',
+  get_evidence_sources: 'fact',
+  post_evidence_sources_upload: 'fact',
+  post_fact_revisions_by_id_confirm: 'fact',
+  get_questions: 'question',
+  post_content_generation_tasks_by_id_execute: 'content',
+  post_publish_records_preview: 'publish',
+  post_publish_records_confirm: 'publish',
+  post_detection_runs: 'detect',
+  post_customer_geo_reports: 'report',
+  post_agent_runs: 'agent',
+  put_projects_by_projectid: 'project',
+}[operation]);
+
+/** 只读探测不该推进阶段：ANALYZE 全程是 GET。 */
+const isWrite = operation => !String(operation).startsWith('get_');
+
+const statusOf = (view, key) => view.stages.find(stage => stage.key === key)?.status;
+const rowOf = (view, key) => view.stages.find(stage => stage.key === key);
 
 test('operations map to workflow stages: catalog tag first, prefix fallback', () => {
-  // 目录内操作走 tag（evidence 前缀优先于 fact tag）。
   assert.equal(stageOfOperation('get_evidence_sources', 'fact'), 'evidence');
   assert.equal(stageOfOperation('post_evidence_sources_upload', 'fact'), 'evidence');
   assert.equal(stageOfOperation('post_fact_revisions_by_id_confirm', 'fact'), 'fact');
@@ -15,52 +44,165 @@ test('operations map to workflow stages: catalog tag first, prefix fallback', ()
   assert.equal(stageOfOperation('post_customer_geo_reports', 'report'), 'report');
   assert.equal(stageOfOperation('post_agent_runs', 'agent'), 'report');
   assert.equal(stageOfOperation('put_projects_by_projectid', 'project'), 'project');
-  // 目录外（未知 tag）走前缀兜底。
   assert.equal(stageOfOperation('post_query_panels_by_panelid_freeze'), 'question');
   assert.equal(stageOfOperation('get_reports_stub'), 'report');
   assert.equal(stageOfOperation('not_in_catalog_op'), undefined);
   assert.equal(stageOfOperation(undefined, 'report'), undefined);
 });
 
-test('a stage opens active on first call and closes done on its success result', () => {
-  let state = { lastSeq: 0, stages: {} };
-  state = foldToolCall(state, { callId: 'c1', operation: 'post_evidence_sources_upload', seq: 1 });
-  const first = stageView(state).stages.find(stage => stage.key === 'evidence');
-  assert.equal(first.status, 'active');
-  assert.equal(first.calls, 1);
-  state = foldToolResult(state, { callId: 'c1', ok: true });
-  assert.equal(stageView(state).stages.find(stage => stage.key === 'evidence').status, 'done');
+test('call arguments arrive as a JSON string and parse to the same object shape', () => {
+  // DSH 会话事件的 tool/call.arguments 是模型原样产出的字符串（未解析）。
+  assert.deepEqual(parseCallArguments('{"operation":"post_detection_runs"}'), { operation: 'post_detection_runs' });
+  assert.deepEqual(parseCallArguments({ operation: 'post_detection_runs' }), { operation: 'post_detection_runs' });
+  assert.deepEqual(parseCallArguments('{不是合法 JSON'), {});
+  assert.deepEqual(parseCallArguments(undefined), {});
+  assert.deepEqual(parseCallArguments('null'), {});
 });
 
-test('failed or unknown results do not complete a stage', () => {
-  let state = { lastSeq: 0, stages: {} };
-  state = foldToolCall(state, { callId: 'c1', operation: 'post_publish_records_confirm', seq: 1 });
-  state = foldToolResult(state, { callId: 'c1', ok: false });
-  assert.equal(stageView(state).stages.find(stage => stage.key === 'publish').status, 'active');
-  assert.equal(foldToolResult(state, { callId: undefined }).stages, state.stages);
+test('only known result codes settle a stage; anything else stays unknown', () => {
+  assert.equal(normalizeOutcome('complete'), 'complete');
+  assert.equal(normalizeOutcome('rejected'), 'rejected');
+  assert.equal(normalizeOutcome('unknown'), 'unknown');
+  assert.equal(normalizeOutcome(undefined), 'unknown');
+  assert.equal(normalizeOutcome('weird'), 'unknown');
 });
 
-test('activity on a later stage supersedes an earlier unfinished one', () => {
-  let state = { lastSeq: 0, stages: {} };
-  state = foldToolCall(state, { callId: 'c1', operation: 'post_evidence_sources', seq: 1 });
-  state = foldToolCall(state, { callId: 'c2', operation: 'post_facts_ai_extract', seq: 2 });
-  const view = stageView(state).stages;
-  assert.equal(view.find(stage => stage.key === 'evidence').status, 'done');
-  assert.equal(view.find(stage => stage.key === 'fact').status, 'active');
+test('a write call opens active and closes done on its complete result', () => {
+  let state = { inheritedEventCount: 0, lastSeq: 0, projectIds: [], stages: {} };
+  state = foldToolCall(state, {
+    callId: 'c1', operation: 'post_evidence_sources_upload', seq: 1, isWrite: true,
+  });
+  assert.equal(statusOf(stageView(state), 'evidence'), 'active');
+  assert.equal(rowOf(stageView(state), 'evidence').writes, 1);
+  state = foldToolResult(state, { callId: 'c1', outcome: 'complete' });
+  assert.equal(statusOf(stageView(state), 'evidence'), 'done');
 });
 
-test('re-entering a done stage reopens it and non-geo calls leave state untouched', () => {
-  let state = { lastSeq: 0, stages: {} };
-  state = foldToolCall(state, { callId: 'c1', operation: 'post_publish_records_confirm', seq: 1 });
-  state = foldToolResult(state, { callId: 'c1', ok: true });
-  assert.equal(stageView(state).stages.find(stage => stage.key === 'publish').status, 'done');
+test('read-only calls accumulate reads without lighting any stage', () => {
+  let state = { inheritedEventCount: 0, lastSeq: 0, projectIds: [], stages: {} };
+  for (const operation of ['get_projects_by_projectid', 'get_evidence_sources', 'get_questions']) {
+    state = foldToolCall(state, { callId: `r-${operation}`, operation, seq: 1, isWrite: false });
+    state = foldToolResult(state, { callId: `r-${operation}`, outcome: 'complete' });
+  }
+  const view = stageView(state);
+  // 一整轮只读感知之后没有任何阶段被点亮——这是本次修复的核心断言。
+  assert.ok(view.stages.every(stage => stage.status === 'pending'), JSON.stringify(view.stages));
+  assert.equal(rowOf(view, 'project').reads, 1);
+  assert.equal(rowOf(view, 'evidence').reads, 1);
+  assert.equal(rowOf(view, 'question').reads, 1);
+  assert.equal(rowOf(view, 'project').writes, 0);
+});
 
-  const before = JSON.stringify(state);
-  state = foldToolCall(state, { callId: 'c2', operation: 'post_publish_records_by_id_query_order', seq: 2 });
-  assert.notEqual(JSON.stringify(state), before);
-  assert.equal(stageView(state).stages.find(stage => stage.key === 'publish').status, 'active');
+test('a rejected write reports failed instead of being swallowed', () => {
+  let state = { inheritedEventCount: 0, lastSeq: 0, projectIds: [], stages: {} };
+  state = foldToolCall(state, { callId: 'p1', operation: 'post_publish_records_confirm', seq: 1, isWrite: true });
+  state = foldToolResult(state, { callId: 'p1', outcome: 'rejected' });
+  assert.equal(statusOf(stageView(state), 'publish'), 'failed');
+});
 
-  const untouched = foldToolCall(state, { callId: 'c3', operation: 'some_other_tool', seq: 3 });
+test('an unknown write outcome stays unknown and is not superseded by later stages', () => {
+  let state = { inheritedEventCount: 0, lastSeq: 0, projectIds: [], stages: {} };
+  state = foldToolCall(state, { callId: 'p1', operation: 'post_publish_records_confirm', seq: 1, isWrite: true });
+  state = foldToolResult(state, { callId: 'p1', outcome: 'unknown' });
+  assert.equal(statusOf(stageView(state), 'publish'), 'unknown');
+  // 越过到检测阶段不能把 publish 的 unknown 洗成 done。
+  state = foldToolCall(state, { callId: 'd1', operation: 'post_detection_runs', seq: 2, isWrite: true });
+  state = foldToolResult(state, { callId: 'd1', outcome: 'complete' });
+  const view = stageView(state);
+  assert.equal(statusOf(view, 'publish'), 'unknown');
+  assert.equal(statusOf(view, 'detect'), 'done');
+});
+
+test('a later stage write closes an earlier stage that is still active', () => {
+  let state = { inheritedEventCount: 0, lastSeq: 0, projectIds: [], stages: {} };
+  state = foldToolCall(state, { callId: 'c1', operation: 'post_evidence_sources_upload', seq: 1, isWrite: true });
+  state = foldToolCall(state, { callId: 'c2', operation: 'post_facts_ai_extract', seq: 2, isWrite: true });
+  const view = stageView(state);
+  assert.equal(statusOf(view, 'evidence'), 'done');
+  assert.equal(statusOf(view, 'fact'), 'active');
+});
+
+test('re-entering a settled stage reopens it and non-geo calls leave state untouched', () => {
+  let state = { inheritedEventCount: 0, lastSeq: 0, projectIds: [], stages: {} };
+  state = foldToolCall(state, { callId: 'c1', operation: 'post_publish_records_confirm', seq: 1, isWrite: true });
+  state = foldToolResult(state, { callId: 'c1', outcome: 'complete' });
+  assert.equal(statusOf(stageView(state), 'publish'), 'done');
+
+  state = foldToolCall(state, { callId: 'c2', operation: 'post_publish_records_preview', seq: 2, isWrite: true });
+  assert.equal(statusOf(stageView(state), 'publish'), 'active');
+
+  const untouched = projectEvent(state, { seq: 3, type: 'tool/call', data: { name: 'some_other_tool', arguments: '{}' } }, { tagOf, isWrite });
   assert.equal(untouched, state);
+  assert.equal(projectEvent(state, { seq: 3, type: 'assistant/message', data: {} }, { tagOf, isWrite }), state);
   assert.equal(emptyStageState().calls, 0);
+});
+
+test('regression: a string-form tool/call event actually drives the projection', () => {
+  // 这条断言对应 2026-10-07 的线上缺陷：apply 按对象读 arguments.operation，
+  // 而 DSH 事件里它是字符串，导致 geo_api 的进度完全失效（阶段恒 pending）。
+  let state = { inheritedEventCount: 0, lastSeq: 0, projectIds: [], stages: {} };
+  const callEvent = seq => ({
+    seq,
+    type: 'tool/call',
+    data: { callId: 'call-1', name: 'geo_api', arguments: JSON.stringify({ operation: 'post_publish_records_preview', projectId: '2097157799925620737' }) },
+  });
+  const resultEvent = outcome => ({
+    seq: 99,
+    type: 'tool/result',
+    data: { message: { toolCallId: 'call-1' }, meta: { kind: 'geo_api', operation: 'post_publish_records_preview', outcome } },
+  });
+
+  state = projectEvent(state, callEvent(1), { tagOf, isWrite });
+  assert.equal(statusOf(stageView(state), 'publish'), 'active');
+  assert.deepEqual(stageView(state).projects, ['2097157799925620737']);
+
+  state = projectEvent(state, resultEvent('rejected'), { tagOf, isWrite });
+  assert.equal(statusOf(stageView(state), 'publish'), 'failed');
+});
+
+test('regression: missing result meta settles as unknown, never as success', () => {
+  // GEO 业务失败不抛错，所以 tool/result.error 恒缺席；没有 meta 就没有结果语义。
+  let state = { inheritedEventCount: 0, lastSeq: 0, projectIds: [], stages: {} };
+  state = projectEvent(state, {
+    seq: 1,
+    type: 'tool/call',
+    data: { callId: 'call-2', name: 'geo_api', arguments: JSON.stringify({ operation: 'post_detection_runs' }) },
+  }, { tagOf, isWrite });
+  state = projectEvent(state, {
+    seq: 2,
+    type: 'tool/result',
+    data: { message: { toolCallId: 'call-2' } },
+  }, { tagOf, isWrite });
+  assert.equal(statusOf(stageView(state), 'detect'), 'unknown');
+});
+
+test('evidence upload drives the evidence stage through its own tool name', () => {
+  let state = { inheritedEventCount: 0, lastSeq: 0, projectIds: [], stages: {} };
+  state = projectEvent(state, {
+    seq: 1,
+    type: 'tool/call',
+    data: { callId: 'up-1', name: 'geo_upload_evidence', arguments: JSON.stringify({ projectId: '42', fileName: 'a.txt' }) },
+  }, { tagOf, isWrite });
+  state = projectEvent(state, {
+    seq: 2,
+    type: 'tool/result',
+    data: { message: { toolCallId: 'up-1' }, meta: { outcome: 'complete' } },
+  }, { tagOf, isWrite });
+  const view = stageView(state);
+  assert.equal(statusOf(view, 'evidence'), 'done');
+  assert.equal(rowOf(view, 'evidence').writes, 1);
+  assert.deepEqual(view.projects, ['42']);
+});
+
+test('a read result never settles a stage and duplicate results are idempotent', () => {
+  let state = { inheritedEventCount: 0, lastSeq: 0, projectIds: [], stages: {} };
+  state = foldToolCall(state, { callId: 'r1', operation: 'get_questions', seq: 1, isWrite: false });
+  const afterRead = foldToolResult(state, { callId: 'r1', outcome: 'complete' });
+  assert.equal(afterRead, state, 'read result must not write into the stage');
+  assert.equal(foldToolResult(state, { callId: undefined }).stages, state.stages);
+
+  let settled = foldToolCall(state, { callId: 'w1', operation: 'post_detection_runs', seq: 2, isWrite: true });
+  settled = foldToolResult(settled, { callId: 'w1', outcome: 'complete' });
+  const again = foldToolResult(settled, { callId: 'w1', outcome: 'rejected' });
+  assert.equal(again, settled, 'a settled stage must not be re-settled by a stale result');
 });

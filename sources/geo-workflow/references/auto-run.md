@@ -19,7 +19,7 @@
 
 **「No endpoint」= 契约-部署漂移（2026-10-07 实测）**：收到 `{"code":404,"msg":"No endpoint <METHOD> <path>."}` 说明契约里有、部署后端未实现该端点（例：`GET /publish-targets` 服务端无 controller）。处置：该项标 **blocked（服务端未实现）**，禁止反复重试参数。
 
-**发布阶段按知识库走，不查目标清单**：`publishTargetId` 是预览生成的配对，不是列表项——**不要调用 `get_publish_targets`**。发布决策项按 [publishing-knowledge.md](publishing-knowledge.md) 自检（稿件/媒体/预算/账号）并自行选择媒体资源：`get_media_catalog_resources` + `get_media_favorites` → `preview-from-resource` 出报价 → ask_user_question 单独确认 → `confirm`。
+**发布阶段：媒体由人工指定，AI 只搜索与执行**（`publishTargetId` 由预览生成，非列表项；**不要调用 `get_publish_targets`**）。决策单的发布项只呈现就绪状态（稿件就绪、预算余量），并请人工指定媒体；人工给定媒体名后按 [publishing-knowledge.md](publishing-knowledge.md) 执行：`get_media_catalog_resources`/`get_media_favorites` 按 `keyword` 搜索定位 → `preview-from-resource` 出报价 → ask_user_question 单独确认金额 → `confirm`。AI 不出媒体候选、不做推荐。
 
 **项目串号（常见自伤，2026-10-07 实测）**：`geo_api` 强制校验「选中的令牌项目」与 path/query/body 里的 `projectId` 完全一致，写错即拒（"Selected project X does not match projectId in query (Y)"）。这是防串号保护，不是插件故障——**处置只有一个：用选定项目的正确 projectId 原样重试**；两次仍失败先调 `get_projects_by_projectid` 校准 ID，仍不行才降级（跳过该项或请操作员从界面提供数据）。**禁止**把串号错误当成插件缺陷去"修插件"或绕开校验。
 

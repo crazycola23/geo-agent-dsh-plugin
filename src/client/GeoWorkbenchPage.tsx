@@ -9,9 +9,11 @@ type StageRow = {
   label: string
   status: string
   calls: number
+  reads?: number
+  writes?: number
   lastOp: string
 }
-type StageView = { stages?: StageRow[] }
+type StageView = { stages?: StageRow[]; projects?: string[] }
 type ProjectionStore = {
   subscribe(listener: () => void): () => void
   getSnapshot(): StageView | undefined
@@ -45,6 +47,22 @@ export interface GeoSessionProgressViewProps {
 
 function stageActivity(view: StageView | undefined): number {
   return (view?.stages ?? []).reduce((total, stage) => total + (stage.calls > 0 ? 1 : 0), 0)
+}
+
+const STATUS_CLASS: Record<string, string> = {
+  pending: 'stepPending',
+  active: 'stepActive',
+  done: 'stepDone',
+  failed: 'stepFailed',
+  unknown: 'stepUnknown',
+}
+
+/** 阶段说明：把只读感知与真实写操作分开写，别让 GET 也读成「已完成」。 */
+function stageCaption(stage: StageRow): string {
+  const parts: string[] = []
+  if (stage.writes !== undefined) parts.push(`写 ${stage.writes}`)
+  if (stage.reads) parts.push(`只读 ${stage.reads}`)
+  return parts.join(' · ')
 }
 
 /**
@@ -138,33 +156,49 @@ function useSessionPendingQuestions(sessions: SessionsService | undefined, sessi
   return active
 }
 
-/** 流程条：canonical 阶段顺序 + 三态；无 GEO 活动时给出一句空态。 */
+/** 流程条：canonical 阶段顺序 + 五态；无 GEO 活动时给出一句空态。 */
 export function GeoStageStepper(props: { view?: StageView }): ReactNode {
   const { view } = props
   const stages = view?.stages ?? []
   const active = stages.find(stage => stage.status === 'active')
+  const failed = stages.find(stage => stage.status === 'failed')
+  const unknown = stages.find(stage => stage.status === 'unknown')
+  const writes = stages.reduce((total, stage) => total + (stage.writes ?? 0), 0)
   if (stages.length === 0 || stages.every(stage => stage.calls === 0)) {
     return <p className={styles.idle}>会话里还没有 GEO 活动；AI 开始调用 GEO 工具后，这里会显示流程进度。</p>
   }
   return (
     <div className={styles.wrap}>
       <ol className={styles.track}>
-        {stages.map(stage => (
-          <li
-            key={stage.key}
-            className={`${styles.step} ${styles[stage.status === 'done' ? 'stepDone' : stage.status === 'active' ? 'stepActive' : 'stepPending']}`}
-            title={stage.lastOp ? `${stage.label} · ${stage.lastOp}` : stage.label}
-          >
-            <span className={styles.dot}>{stage.status === 'done' ? '✓' : ''}</span>
-            <span className={styles.stepLabel}>{stage.label}</span>
-          </li>
-        ))}
+        {stages.map(stage => {
+          const caption = stageCaption(stage)
+          return (
+            <li
+              key={stage.key}
+              className={`${styles.step} ${styles[STATUS_CLASS[stage.status] ?? 'stepPending']}`}
+              title={[stage.label, stage.lastOp, caption && `（${caption}）`].filter(Boolean).join(' · ')}
+            >
+              <span className={styles.dot}>{stage.status === 'done' ? '✓' : stage.status === 'failed' ? '!' : stage.status === 'unknown' ? '?' : ''}</span>
+              <span className={styles.stepLabel}>{stage.label}</span>
+            </li>
+          )
+        })}
       </ol>
-      <p className={styles.caption}>
-        {active
-          ? `进行中：${active.label}${active.lastOp ? ` · ${active.lastOp}` : ''}`
-          : '当前阶段已完成；AI 进入下一步时会自动更新。'}
-      </p>
+      {failed ? (
+        <p className={styles.caption} data-status="failed">被拒：{failed.label}{failed.lastOp ? ` · ${failed.lastOp}` : ''} — 该阶段未完成，需要人工处理。</p>
+      ) : null}
+      {!failed && unknown ? (
+        <p className={styles.caption} data-status="unknown">待查证：{unknown.label}{unknown.lastOp ? ` · ${unknown.lastOp}` : ''} — 结果未确认，请先核对 GEO 记录再重试。</p>
+      ) : null}
+      {!failed && !unknown ? (
+        <p className={styles.caption}>
+          {active
+            ? `进行中：${active.label}${active.lastOp ? ` · ${active.lastOp}` : ''}`
+            : writes > 0
+              ? '本轮写操作已收敛；AI 进入下一步时会自动更新。'
+              : '目前只有只读探测，尚未发生写操作。'}
+        </p>
+      ) : null}
     </div>
   )
 }
