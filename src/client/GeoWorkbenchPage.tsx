@@ -310,18 +310,44 @@ export function GeoStageStepper(props: { view?: StageView }): ReactNode {
   const writes = stages.reduce((total, stage) => total + (stage.writes ?? 0), 0)
   const reads = stages.reduce((total, stage) => total + (stage.reads ?? 0), 0)
   const pendingApprovals = stages.filter(stage => stage.status === 'awaiting').length
+  const doneCount = stages.filter(stage => stage.status === 'done').length
+  // 「当前」= 最该看的那一格：等审批优先（需要人介入），其次进行中，
+  // 再次被拒/待查证（要处理），最后才是最近完成的。
+  const focusStage = stages.find(stage => stage.status === 'awaiting')
+    ?? stages.find(stage => stage.status === 'active')
+    ?? stages.find(stage => stage.status === 'failed')
+    ?? stages.find(stage => stage.status === 'unknown')
+    ?? stages.filter(stage => stage.status === 'done').pop()
   const notes = view?.notes ?? []
   if (stages.length === 0 || (stages.every(stage => stage.calls === 0) && notes.length === 0)) {
     return <p className={styles.idle}>会话里还没有 GEO 活动；AI 开始调用 GEO 工具后，这里会显示流程进度。</p>
   }
   return (
     <div className={styles.wrap}>
-      <div className={styles.totals}>
-        <span className={styles.totalItem}><strong>{writes}</strong> 写操作</span>
-        <span className={styles.totalItem}><strong>{reads}</strong> 只读探测</span>
-        {pendingApprovals > 0 ? (
-          <span className={`${styles.totalItem} ${styles.totalAlert}`}><strong>{pendingApprovals}</strong> 项等审批</span>
-        ) : null}
+      <div className={styles.overview}>
+        <div className={styles.totals}>
+          <span className={styles.totalItem}><strong>{writes}</strong> 写操作</span>
+          <span className={styles.totalItem}><strong>{reads}</strong> 只读探测</span>
+          {pendingApprovals > 0 ? (
+            <span className={`${styles.totalItem} ${styles.totalAlert}`}><strong>{pendingApprovals}</strong> 项等审批</span>
+          ) : null}
+        </div>
+        {/* 八段流程条：网格给逐格细节，这一条给「走到哪、卡在哪」的整体感。
+            每段带 title，鼠标停上去能看到是哪个阶段。 */}
+        <div className={styles.rail} role="img" aria-label={`流程进度：已完成 ${doneCount} / ${stages.length}`}>
+          {stages.map(stage => (
+            <span
+              key={stage.key}
+              className={styles.railSegment}
+              data-status={stage.status}
+              title={`${stage.label} · ${STATUS_LABEL[stage.status] ?? stage.status}`}
+            />
+          ))}
+        </div>
+        <div className={styles.railSummary}>
+          <span>已完成 {doneCount} / {stages.length}</span>
+          {focusStage ? <span>当前：{focusStage.label}</span> : null}
+        </div>
       </div>
       <ol className={styles.grid}>
         {stages.map((stage, index) => {
@@ -332,13 +358,20 @@ export function GeoStageStepper(props: { view?: StageView }): ReactNode {
             <li
               key={stage.key}
               className={`${styles.cell} ${styles[STATUS_CLASS[stage.status] ?? 'cellPending']}`}
+              // 入场 stagger：同排 40ms 递进，建立阅读顺序；只作用一次，
+              // 且 transform/opacity 不触发布局。reduced-motion 下 CSS 直接关掉。
+              style={{ animationDelay: `${(index % 4) * 40}ms` }}
               title={opLabel || stage.label}
             >
               <span className={styles.cellIndex}>{index + 1}</span>
               <span className={styles.cellBody}>
                 <span className={styles.cellTop}>
                   <span className={styles.cellName}>{stage.label}</span>
-                  <span className={styles.cellStatus}>{STATUS_LABEL[stage.status] ?? stage.status}</span>
+                  {/* 色点让同一列扫一眼就能分辨状态，比逐字读标签快。 */}
+                  <span className={styles.cellStatus}>
+                    <span className={styles.cellDot} />
+                    {STATUS_LABEL[stage.status] ?? stage.status}
+                  </span>
                 </span>
                 <span className={styles.cellCounts}>
                   {writesForStage > 0 ? <span className={styles.countWrite}>写 {writesForStage}</span> : null}

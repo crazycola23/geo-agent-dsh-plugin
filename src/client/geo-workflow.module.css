@@ -2,7 +2,13 @@
    .page 锁高不滚（overflow:hidden + height:100% + min-height:0）→ .pageScroll 专滚
    → .pageContent 只管居中与底部留白。高度全部由宿主 flex 链传递，
    不需要 calc(100dvh - 120px) 这类硬编码头部高度的兜底 —— 那个数一变就偏，
-   偏大留空白、偏小提前裁断。 */
+   偏大留空白、偏小提前裁断。
+
+   动效预算（Motion level: Subtle）——只回答一个问题：「什么变了」。
+   入场 stagger 建立阅读顺序；状态跃迁用 CSS animation 在类名变化时自动重播，
+   因此不需要 JS 去感知变化；等审批的呼吸是唯一常驻动效。
+   配色一律取宿主主题语义变量（dsh-client-ui-theme 的 alias 层），浅色/深色
+   两套皮肤自动正确。 */
 .page {
   display: flex;
   flex-direction: column;
@@ -36,23 +42,33 @@
   min-width: 0;
 }
 
-/* 配色一律取宿主主题语义变量（dsh-client-ui-theme 的 alias 层），不用固定色值：
-   浅色/深色两套皮肤下都自动正确，也不会与宿主其它页面撞色。
-   六态语义分别为 静默(待开始) / 品牌蓝(进行中) / 绿(已完成) / 红(被拒) /
-   琥珀(等审批、待查证)。 */
+/* 总览：计数与流程条同处一块，运营员先看整体再看逐格细节。 */
+.overview {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
 
-/* 汇总条：写操作与只读探测分列，避免「有调用」被误读成「有进展」。 */
 .totals {
   display: flex;
+  align-items: baseline;
   gap: 16px;
   font-size: 12px;
   color: var(--dsw-alias-label-secondary);
 }
 
+.totalItem {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+}
+
+/* 计数是这块的主要读数，等宽数字避免位数变化时左右跳动。 */
 .totalItem strong {
   color: var(--dsw-alias-label-primary);
   font-size: 14px;
   font-weight: 600;
+  font-variant-numeric: tabular-nums;
 }
 
 /* 等审批是唯一需要主动打断运营员的状态，用警告色单独标出来。 */
@@ -61,47 +77,45 @@
   color: var(--dsw-alias-state-warn-label);
 }
 
-.cellAwaiting {
-  border-left-color: var(--dsw-alias-state-warn-primary);
-  background: color-mix(in srgb, var(--dsw-alias-state-warn-primary) 8%, var(--dsw-alias-bg-layer-3));
-  animation: awaitingPulse 1.8s ease-in-out infinite;
+/* 八段流程条：网格卡片给细节，这一条给「走到哪、卡在哪」的整体感。 */
+.rail {
+  display: flex;
+  gap: 3px;
+  width: 100%;
 }
 
-.cellAwaiting .cellIndex {
+.railSegment {
+  flex: 1;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--dsw-alias-bg-module-platform);
+  transition: background-color 200ms ease;
+}
+
+.railSegment[data-status='active'] {
+  background: var(--dsw-alias-state-business-primary);
+}
+
+.railSegment[data-status='done'] {
+  background: var(--dsw-alias-state-success-primary);
+}
+
+.railSegment[data-status='failed'] {
+  background: var(--dsw-alias-state-error-primary);
+}
+
+.railSegment[data-status='awaiting'],
+.railSegment[data-status='unknown'] {
   background: var(--dsw-alias-state-warn-primary);
-  color: var(--dsw-alias-label-primary-foreground, #fff);
-  font-weight: 700;
 }
 
-.cellAwaiting .cellStatus {
-  color: var(--dsw-alias-state-warn-label);
-  font-weight: 600;
-}
-
-@keyframes awaitingPulse {
-  0%, 100% { border-color: var(--dsw-alias-border-l2); }
-  50% { border-color: var(--dsw-alias-state-warn-primary); }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .cellAwaiting { animation: none; }
-}
-
-.cellHint {
-  color: var(--dsw-alias-state-warn-label);
+.railSummary {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--dsw-alias-label-caption);
   font-size: 11px;
-  line-height: 1.4;
-}
-
-/* 拒绝原因截断显示，完整内容留在 title 里。 */
-.cellReason {
-  display: block;
-  overflow: hidden;
-  color: var(--dsw-alias-state-error-primary);
-  font-size: 11px;
-  line-height: 1.4;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 /* 阶段网格：四列自适应，窄屏自动降列。 */
@@ -114,15 +128,30 @@
   list-style: none;
 }
 
+/* 入场：仅首次挂载播放；同排 stagger 由 TSX 的 animationDelay 给出。
+   只在 transform/opacity 上做，不触发布局。 */
+@keyframes cellIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
+}
+
 .cell {
   display: flex;
   gap: 10px;
+  min-height: 84px;
   padding: 10px 12px;
   border: 1px solid var(--dsw-alias-border-l2);
-  border-left: 3px solid var(--dsw-alias-border-l3);
+  border-left: 3px solid transparent;
   border-radius: 8px;
   background: var(--dsw-alias-bg-layer-3);
   min-width: 0;
+  animation: cellIn 320ms ease-out both;
+  transition: border-color 150ms ease, background-color 150ms ease, transform 150ms ease;
+}
+
+.cell:hover {
+  transform: translateY(-1px);
+  border-color: var(--dsw-alias-border-l3);
 }
 
 /* 圆圈底色必须与卡片底色区分开：bg-layer-1/2/3 在浅色皮肤下是同一个值，
@@ -160,10 +189,21 @@
   font-weight: 600;
 }
 
+/* 状态：色点 + 文字。色点让「同一列扫一眼」就能分辨状态，比读文字快。 */
 .cellStatus {
   flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   font-size: 11px;
   color: var(--dsw-alias-label-caption);
+}
+
+.cellDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
 }
 
 .cellCounts {
@@ -190,20 +230,39 @@
 .cellOp {
   display: block;
   overflow: hidden;
-  color: var(--dsw-alias-label-secondary);
+  color: var(--dsw-alias-label-caption);
   font-size: 11px;
   line-height: 1.4;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-/* 待开始：不加任何强调色，让运营员的注意力留给进行中与等审批。 */
-.cellPending {
-  border-left-color: var(--dsw-alias-border-l3);
+/* ——— 六态 ———
+   待开始保持静默（无状态条、无强调色），注意力留给进行中与等审批。
+   其余状态各有语义色；圆圈在状态类首次应用时脉冲一次——CSS 在 animation
+   属性变化时重播，所以「刚刚完成 / 刚刚被拒」是零 JS 的确认动效。 */
+@keyframes statusPulse {
+  from { box-shadow: 0 0 0 0 color-mix(in srgb, currentColor 45%, transparent); }
+  to { box-shadow: 0 0 0 6px transparent; }
+}
+
+.cellPending .cellStatus {
+  color: var(--dsw-alias-label-caption);
+}
+
+.cellPending .cellDot {
+  background: var(--dsw-alias-border-l3);
 }
 
 .cellDone {
   border-left-color: var(--dsw-alias-state-success-primary);
+}
+
+.cellDone .cellIndex,
+.cellActive .cellIndex,
+.cellFailed .cellIndex,
+.cellUnknown .cellIndex {
+  animation: statusPulse 420ms ease-out;
 }
 
 .cellDone .cellIndex {
@@ -247,8 +306,7 @@
   font-weight: 600;
 }
 
-/* 待查证与等审批同为琥珀系，但弱化：只染色文字与左侧标记，圆圈保持中性，
-   与「等审批」的实心圆圈 + 呼吸动画区分开。 */
+/* 待查证与等审批同为琥珀系，但弱化：只染文字与左侧标记，圆圈保持中性。 */
 .cellUnknown {
   border-left-color: var(--dsw-alias-state-warn-primary);
   background: color-mix(in srgb, var(--dsw-alias-state-warn-primary) 4%, var(--dsw-alias-bg-layer-3));
@@ -263,6 +321,47 @@
 .cellUnknown .cellStatus {
   color: var(--dsw-alias-state-warn-label);
   font-weight: 600;
+}
+
+/* 等审批：唯一常驻动效。脉冲放在圆圈上，卡片本身留给入场动画，两者不抢同一个
+   animation 属性（同一元素上后写的会覆盖前一个）。 */
+@keyframes awaitingPulse {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--dsw-alias-state-warn-primary) 55%, transparent); }
+  50% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--dsw-alias-state-warn-primary) 16%, transparent); }
+}
+
+.cellAwaiting {
+  border-left-color: var(--dsw-alias-state-warn-primary);
+  background: color-mix(in srgb, var(--dsw-alias-state-warn-primary) 8%, var(--dsw-alias-bg-layer-3));
+}
+
+.cellAwaiting .cellIndex {
+  background: var(--dsw-alias-state-warn-primary);
+  color: var(--dsw-alias-label-primary-foreground, #fff);
+  font-weight: 700;
+  animation: awaitingPulse 1.8s ease-in-out infinite;
+}
+
+.cellAwaiting .cellStatus {
+  color: var(--dsw-alias-state-warn-label);
+  font-weight: 600;
+}
+
+.cellHint {
+  color: var(--dsw-alias-state-warn-label);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+/* 拒绝原因截断显示，完整内容留在 title 里。 */
+.cellReason {
+  display: block;
+  overflow: hidden;
+  color: var(--dsw-alias-state-error-primary);
+  font-size: 11px;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .stepperCard {
@@ -280,6 +379,12 @@
   font-weight: 600;
 }
 
+.caption {
+  margin: 0;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+}
+
 .caption[data-status="failed"] {
   color: var(--dsw-alias-state-error-primary);
 }
@@ -291,12 +396,6 @@
 
 .caption[data-status="unknown"] {
   color: var(--dsw-alias-state-warn-label);
-}
-
-.caption {
-  margin: 0;
-  color: var(--dsw-alias-label-secondary);
-  font-size: 12px;
 }
 
 .idle {
@@ -375,4 +474,24 @@
 .noteText {
   min-width: 0;
   overflow-wrap: anywhere;
+}
+
+/* 减少动态偏好下全部动效退化为终态：入场不播（直接可见）、状态脉冲与呼吸
+   一并关闭，仅保留 hover 的颜色/位移反馈（它们不是自动播放的动效）。 */
+@media (prefers-reduced-motion: reduce) {
+  .cell {
+    animation: none;
+  }
+
+  .cellDone .cellIndex,
+  .cellActive .cellIndex,
+  .cellFailed .cellIndex,
+  .cellUnknown .cellIndex,
+  .cellAwaiting .cellIndex {
+    animation: none;
+  }
+
+  .cell:hover {
+    transform: none;
+  }
 }
