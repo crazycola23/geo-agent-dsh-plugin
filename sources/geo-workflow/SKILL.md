@@ -23,6 +23,7 @@ description: Run internal GEO operations through the authenticated DSH GEO tools
 - 全流程、业务确认点与首版边界：[workflow.md](references/workflow.md)
 - 自动跑单（OpsRun）触发、感知清单与决策单审批：[auto-run.md](references/auto-run.md)
 - 运营员 UI 流程速查与术语映射（API↔界面差异）：[ui-flow.md](references/ui-flow.md)
+- 发布知识库（目标机制、自检清单、媒体选择启发式）：[publishing-knowledge.md](references/publishing-knowledge.md)
 - 前端产物源码级走查报告（逐页字段全集/状态机/权限码）：[ui-static-report.md](references/ui-static-report.md)
 - DSH 隔离安装、凭据和运行：[setup.md](references/setup.md)
 - OpenAPI 与本 Skill 的维护办法：[maintenance.md](references/maintenance.md)
