@@ -34,6 +34,15 @@ export const STAGES = [
 /** geo_upload_evidence 是目录外的专用工具，投影里映射到这个等价写操作。 */
 export const GEO_EVIDENCE_OPERATION = 'post_evidence_sources_upload';
 
+/**
+ * AI 主动写进度说明的工具名。它不是 GEO 目录操作（不推进任何阶段），
+ * 单独折叠成一条说明；何时该写见 geo-workflow skill 的「进度同步」。
+ */
+export const GEO_NOTE_TOOL = 'geo_progress_note';
+
+/** 单条说明的字数上限：一句话说清结论，不写过程。 */
+const NOTE_TEXT_LIMIT = 200;
+
 const STAGE_BY_KEY = new Map(STAGES.map(stage => [stage.key, stage]));
 
 // 目录 tag → 阶段。evidence 在契约里归 fact tag，但业务上是独立阶段，
@@ -115,6 +124,19 @@ export function emptyStageState() {
   return { calls: 0, reads: 0, writes: 0, lastOp: '', lastCallId: '', outcome: '', awaitingApproval: false, rejectionReason: '' };
 }
 
+/**
+ * 进度说明保留条数。由 AI 主动写入（见 geo_progress_note 工具与 geo-workflow
+ * skill 的「进度同步」一节），不是每次调用的机械流水——后者会把「做了什么」
+ * 淹在几十条同名操作里，运营员要的是结论。
+ */
+export const PROGRESS_NOTE_LIMIT = 40;
+
+/** 追加一条进度说明；超出上限丢最旧，阶段层的计数不受影响。 */
+function appendNote(state, entry) {
+  const notes = [...(state.notes ?? []), entry];
+  return notes.length > PROGRESS_NOTE_LIMIT ? notes.slice(notes.length - PROGRESS_NOTE_LIMIT) : notes;
+}
+
 /** 收敛已知的三个结果码；其它一律按 unknown（未知不得当成成功）。 */
 export function normalizeOutcome(outcome) {
   return outcome === 'complete' || outcome === 'rejected' || outcome === 'unknown'
@@ -171,19 +193,20 @@ export function foldToolCall(state, { callId, operation, tag, seq, projectId, is
  */
 export function foldToolResult(state, { callId, outcome, reason }) {
   if (typeof callId !== 'string' || callId === '') return state;
-  const stageKey = Object.keys(state.stages).find(key => state.stages[key]?.lastCallId === callId);
+  const stageKey = stageKeyOfCallId(state, callId);
   if (stageKey === undefined) return state;
   const stage = state.stages[stageKey];
   if (stage.writes === 0) return state;
   if (stage.outcome !== '') return state;
+  const settled = normalizeOutcome(outcome);
   return {
     ...state,
     stages: {
       ...state.stages,
       [stageKey]: {
         ...stage,
-        outcome: normalizeOutcome(outcome),
-        rejectionReason: normalizeOutcome(outcome) === 'rejected' && typeof reason === 'string' ? reason : '',
+        outcome: settled,
+        rejectionReason: settled === 'rejected' && typeof reason === 'string' ? reason : '',
       },
     },
   };
@@ -239,6 +262,23 @@ export function foldApprovalDecided(state, { callId, outcome }) {
 
 /** 事件折叠的单一入口：投影 apply 与回归测试共用同一条路径。 */
 export function projectEvent(state, event, { tagOf, isWrite }) {
+  // 进度说明：AI 主动写，先于目录操作分支，因为它不属于任何阶段。
+  if (event?.type === 'tool/call' && event.data?.name === GEO_NOTE_TOOL) {
+    const args = parseCallArguments(event.data.arguments);
+    const text = typeof args.text === 'string' ? args.text.trim() : '';
+    if (text === '') return state;
+    const stage = typeof args.stage === 'string' ? args.stage : '';
+    return {
+      ...state,
+      lastSeq: typeof event.seq === 'number' ? event.seq : state.lastSeq,
+      notes: appendNote(state, {
+        at: typeof event.time === 'number' ? event.time : 0,
+        seq: typeof event.seq === 'number' ? event.seq : 0,
+        stageKey: STAGE_BY_KEY.has(stage) ? stage : '',
+        text: text.slice(0, NOTE_TEXT_LIMIT),
+      }),
+    };
+  }
   if (event?.type === 'tool/call') {
     const call = readCallMeta(event);
     if (!call) return state;
@@ -318,5 +358,16 @@ export function stageView(stageState) {
     if (status === 'active' && furthestWrite > index) status = 'done';
     return { ...row, status };
   });
-  return { stages, projects: [...(stageState?.projectIds ?? [])] };
+  return {
+    stages,
+    projects: [...(stageState?.projectIds ?? [])],
+    // 新的在前：运营员先看最近发生了什么。
+    notes: [...(stageState?.notes ?? [])].reverse().map(note => ({
+      at: note.at,
+      seq: note.seq,
+      stageKey: note.stageKey,
+      stageLabel: STAGE_BY_KEY.get(note.stageKey)?.label ?? '',
+      text: note.text,
+    })),
+  };
 }

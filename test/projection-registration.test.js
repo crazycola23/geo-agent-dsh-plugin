@@ -78,9 +78,9 @@ test('regression: geoWorkflow projection registers with zod schemas and stays re
     assert.equal(registry.units.has('geoWorkflow'), true, 'geoWorkflow must be registered');
     const unit = registry.units.get('geoWorkflow');
     assert.equal(unit.key, 'geoWorkflow');
-    // 折叠语义改过（字符串实参 / 只读不推进 / 结果取自 meta / 消费审批事件），
-    // stateVersion 必须递增，否则旧检查点会被 forward-apply 成垃圾。
-    assert.equal(unit.stateVersion, 3);
+    // 折叠语义改过（字符串实参 / 只读不推进 / 结果取自 meta / 消费审批事件 /
+// 新增 AI 主动写的进度说明），stateVersion 必须递增，否则旧检查点会被 forward-apply 成垃圾。
+    assert.equal(unit.stateVersion, 4);
 
     // 空会话的视图必须能过 viewSchema（init 的字段集与 schema 一致）。
     const empty = registry.drive('geoWorkflow', []);

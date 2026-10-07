@@ -320,3 +320,59 @@
 .pendingDot {
   flex: none;
 }
+
+/* 进度说明：AI 主动写的结论（不是调用流水），新的在前。 */
+.noteSection {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.noteHeading {
+  margin: 0;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.noteList {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.noteItem {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  color: var(--dsw-alias-label-primary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.noteTime {
+  flex: none;
+  color: var(--dsw-alias-label-caption);
+  font-variant-numeric: tabular-nums;
+}
+
+.noteStage {
+  flex: none;
+  color: var(--dsw-alias-label-secondary);
+}
+
+/* 阶段名与正文之间的分隔点由 CSS 生成，说明文本本身保持纯净。 */
+.noteStage::after {
+  content: '·';
+  margin-left: 6px;
+  color: var(--dsw-alias-label-caption);
+}
+
+.noteText {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}

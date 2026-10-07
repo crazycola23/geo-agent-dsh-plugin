@@ -260,6 +260,55 @@ test('entering a stage again clears the previous rejection reason', () => {
   assert.equal(detect.awaitingApproval, false);
 });
 
+test('a progress note is recorded from the AI-authored tool call, newest first in the view', () => {
+  let state = { inheritedEventCount: 0, lastSeq: 0, projectIds: [], approvals: {}, notes: [], stages: {} };
+  state = projectEvent(state, {
+    seq: 1,
+    time: 1759820000000,
+    type: 'tool/call',
+    data: { callId: 'n1', name: 'geo_progress_note', arguments: JSON.stringify({ text: '资料阶段完成：4 份资料已入库', stage: 'evidence' }) },
+  }, { tagOf, isWrite });
+  state = projectEvent(state, {
+    seq: 2,
+    time: 1759820060000,
+    type: 'tool/call',
+    data: { callId: 'n2', name: 'geo_progress_note', arguments: JSON.stringify({ text: '检测排队中，等你的审批确认' }) },
+  }, { tagOf, isWrite });
+
+  assert.equal(state.notes.length, 2);
+  const view = stageView(state);
+  assert.equal(view.notes[0].text, '检测排队中，等你的审批确认', 'newest first');
+  assert.equal(view.notes[0].at, 1759820060000);
+  assert.equal(view.notes[1].stageLabel, '资料');
+  // 说明不属于任何阶段：不得推进流程。
+  assert.equal(view.stages.every(stage => stage.writes === 0 && stage.calls === 0), true);
+});
+
+test('progress notes are capped, dropping the oldest, and blank text is ignored', () => {
+  let state = { inheritedEventCount: 0, lastSeq: 0, projectIds: [], approvals: {}, notes: [], stages: {} };
+  const total = 45;
+  for (let index = 1; index <= total; index += 1) {
+    state = projectEvent(state, {
+      seq: index,
+      time: 1759820000000 + index * 1000,
+      type: 'tool/call',
+      data: { callId: `n${index}`, name: 'geo_progress_note', arguments: JSON.stringify({ text: `第 ${index} 条` }) },
+    }, { tagOf, isWrite });
+  }
+  assert.equal(state.notes.length, 40, 'capped at PROGRESS_NOTE_LIMIT');
+  assert.equal(state.notes[0].text, '第 6 条', 'oldest dropped');
+  assert.equal(state.notes[39].text, '第 45 条');
+
+  const before = state;
+  assert.equal(
+    projectEvent(state, { seq: 99, type: 'tool/call', data: { callId: 'x', name: 'geo_progress_note', arguments: JSON.stringify({ text: '   ' }) } }, { tagOf, isWrite }),
+    before,
+    'blank note must not be recorded',
+  );
+  // 说明工具不得被当成 GEO 目录操作而推进阶段。
+  assert.equal(stageView(state).stages.some(stage => stage.calls > 0), false);
+});
+
 test('a read result never settles a stage and duplicate results are idempotent', () => {
   let state = { inheritedEventCount: 0, lastSeq: 0, projectIds: [], approvals: {}, stages: {} };
   state = foldToolCall(state, { callId: 'r1', operation: 'get_questions', seq: 1, isWrite: false });

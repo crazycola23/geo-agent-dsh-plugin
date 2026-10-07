@@ -15,7 +15,9 @@ const catalog = JSON.parse(readFileSync(resolve(here, 'generated', 'openapi.cata
 const operationNames = Object.keys(catalog.operations).sort();
 // ask_user_question 是 DSH 核心内置工具；列入白名单是为了 restrictTools
 // 隔离打开时它不被一起屏蔽——agent 向人提问（带候选项）依赖它。
-const toolNames = ['geo_api', 'geo_describe_operation', 'geo_list_evidence_files', 'geo_upload_evidence', 'geo_connection_status', 'geo_approval_policy', 'ask_user_question'];
+// geo_progress_note 同理属于本插件自有工具，漏列会让它在隔离打开时被屏蔽，
+// 进度页的说明区就永远空着（dsh-plugin.test.js 对这份清单有精确断言）。
+const toolNames = ['geo_api', 'geo_describe_operation', 'geo_list_evidence_files', 'geo_upload_evidence', 'geo_progress_note', 'geo_connection_status', 'geo_approval_policy', 'ask_user_question'];
 // Write-delegation domains. Each key maps to one settings policy (`ask` keeps
 // the operator prompt, the explicit 'agent' value delegates the domain's
 // writes to the running agent's judgment). Default-deny for automation: an
@@ -323,6 +325,21 @@ export function apply(ctx, config = {}) {
   }));
 
 
+  // 进度说明：由 AI 主动写，不是每次调用的机械流水——阶段网格已经给出了调用
+  // 计数，「AI 做了什么」需要的是结论而不是操作序列。何时该写、写什么粒度见
+  // geo-workflow skill 的「进度同步」一节。
+  ctx.tools.register(defineGeoTool({
+    name: 'geo_progress_note',
+    description: 'Record one short progress note for the operator-visible GEO progress page. Write the conclusion, not the call sequence: "fact stage done: 7 facts confirmed" rather than listing operations. Use it when a stage finishes, when work is blocked, or when the operator decision is awaited; skip it for single routine reads. Notes are kept with the current session and shown newest-first.',
+    parameters: {
+      text: { type: 'string', required: true, description: 'One short sentence stating what was done or what is blocked, in the operator UI language.' },
+      stage: { type: 'string', description: 'Optional stage key this note belongs to: project | evidence | fact | question | content | publish | detect | report.' },
+    },
+    async execute({ text, stage }) {
+      return { recorded: true, text, stage };
+    },
+  }));
+
   ctx.tools.register(defineGeoTool({
     name: 'geo_connection_status',
     description: 'Validate one configured GEO project API token against GEO, and report the bound project, token name, scopes, and expiry without displaying the bearer.',
@@ -398,6 +415,12 @@ export function apply(ctx, config = {}) {
         lastSeq: z.number().int().min(0),
         projectIds: z.array(z.string()),
         approvals: z.record(z.string(), z.string()),
+        notes: z.array(z.strictObject({
+          at: z.number(),
+          seq: z.number(),
+          stageKey: z.string(),
+          text: z.string(),
+        })),
         stages: z.record(z.string(), z.strictObject({
           calls: z.number().int().min(0),
           reads: z.number().int().min(0),
@@ -414,11 +437,12 @@ export function apply(ctx, config = {}) {
         lastSeq: 0,
         projectIds: [],
         approvals: {},
+        notes: [],
         stages: {},
       }),
-      // 折叠语义已变（字符串实参 / 只读不推进 / 结果取自 meta / 消费审批事件），
-      // stateVersion 必须递增：否则旧的持久化检查点行会被 forward-apply
-      // 成缺字段的垃圾状态（dsh-session-projection 契约）。
+      // 折叠语义已变（字符串实参 / 只读不推进 / 结果取自 meta / 消费审批事件 /
+      // 新增 AI 主动写的进度说明），stateVersion 必须递增：否则旧的持久化
+      // 检查点行会被 forward-apply 成缺字段的垃圾状态（dsh-session-projection 契约）。
       apply: (state, event) => {
         if (event.seq < state.inheritedEventCount) return state;
         return projectEvent(state, event, {
@@ -441,10 +465,17 @@ export function apply(ctx, config = {}) {
             rejectionReason: z.string(),
           })),
           projects: z.array(z.string()),
+          notes: z.array(z.strictObject({
+            at: z.number(),
+            seq: z.number(),
+            stageKey: z.string(),
+            stageLabel: z.string(),
+            text: z.string(),
+          })),
         }),
         view: (state) => stageView(state),
       },
-      stateVersion: 3,
+      stateVersion: 4,
     });
   });
 }

@@ -15,7 +15,23 @@ type StageRow = {
   awaitingApproval?: boolean
   rejectionReason?: string
 }
-type StageView = { stages?: StageRow[]; projects?: string[] }
+type NoteRow = {
+  at: number
+  seq: number
+  stageKey?: string
+  stageLabel?: string
+  text: string
+}
+type StageView = { stages?: StageRow[]; projects?: string[]; notes?: NoteRow[] }
+
+/** 说明条目的时间戳：只显示到分钟——运营员看的是先后，不是精确到秒。 */
+function formatNoteTime(at?: number): string {
+  if (typeof at !== 'number' || at <= 0) return ''
+  const date = new Date(at)
+  const hours = String(date.getHours()).padStart(2, '0')
+  const minutes = String(date.getMinutes()).padStart(2, '0')
+  return `${hours}:${minutes}`
+}
 type ProjectionStore = {
   subscribe(listener: () => void): () => void
   getSnapshot(): StageView | undefined
@@ -263,7 +279,8 @@ export function GeoStageStepper(props: { view?: StageView }): ReactNode {
   const writes = stages.reduce((total, stage) => total + (stage.writes ?? 0), 0)
   const reads = stages.reduce((total, stage) => total + (stage.reads ?? 0), 0)
   const pendingApprovals = stages.filter(stage => stage.status === 'awaiting').length
-  if (stages.length === 0 || stages.every(stage => stage.calls === 0)) {
+  const notes = view?.notes ?? []
+  if (stages.length === 0 || (stages.every(stage => stage.calls === 0) && notes.length === 0)) {
     return <p className={styles.idle}>会话里还没有 GEO 活动；AI 开始调用 GEO 工具后，这里会显示流程进度。</p>
   }
   return (
@@ -309,6 +326,20 @@ export function GeoStageStepper(props: { view?: StageView }): ReactNode {
           )
         })}
       </ol>
+      {notes.length > 0 ? (
+        <section className={styles.noteSection}>
+          <h3 className={styles.noteHeading}>进度说明</h3>
+          <ol className={styles.noteList}>
+            {notes.map((note, index) => (
+              <li key={`${note.seq}-${index}`} className={styles.noteItem}>
+                <time className={styles.noteTime}>{formatNoteTime(note.at)}</time>
+                {note.stageLabel ? <span className={styles.noteStage}>{note.stageLabel}</span> : null}
+                <span className={styles.noteText}>{note.text}</span>
+              </li>
+            ))}
+          </ol>
+        </section>
+      ) : null}
       {awaiting ? (
         <p className={styles.caption} data-status="awaiting">等审批：{awaiting.label}{operationLabel(awaiting.lastOp) ? ` · ${operationLabel(awaiting.lastOp)}` : ''} — 请在审批弹窗中确认后继续。</p>
       ) : null}
