@@ -95,6 +95,7 @@ function stageActivity(view: StageView | undefined): number {
 
 const STATUS_CLASS: Record<string, string> = {
   pending: 'cellPending',
+  probed: 'cellProbed',
   awaiting: 'cellAwaiting',
   active: 'cellActive',
   done: 'cellDone',
@@ -105,6 +106,7 @@ const STATUS_CLASS: Record<string, string> = {
 /** 状态码 → 网格单元格里的短标签（中文，与 UI 术语一致）。 */
 const STATUS_LABEL: Record<string, string> = {
   pending: '待开始',
+  probed: '已探测',
   awaiting: '等审批',
   active: '进行中',
   done: '已完成',

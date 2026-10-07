@@ -372,11 +372,11 @@ export function projectEvent(state, event, { tagOf, isWrite }) {
 }
 
 /**
- * 派生面向客户端的视图：canonical 顺序 + 六态
- * （pending 待开始 / awaiting 等审批 / active 进行中 / done 已完成 /
- * failed 被拒 / unknown 待查证）。
+ * 派生面向客户端的视图：canonical 顺序 + 七态
+ * （pending 待开始 / probed 已探测 / awaiting 等审批 / active 进行中 /
+ * done 已完成 / failed 被拒 / unknown 待查证）。
  * 阶段状态只由写操作决定；更晚阶段发生过写操作时，把仍 active 的更早阶段
- * 视为已越过，但 awaiting / failed / unknown 不会被掩盖。
+ * 视为已越过，但 awaiting / failed / unknown / probed 不会被掩盖。
  */
 export function stageView(stageState) {
   const touched = stageState?.stages ?? {};
@@ -400,6 +400,10 @@ export function stageView(stageState) {
     let status;
     // 等人工审批优先于一切：这一刻写入还没落地，正是运营员要盯的一格。
     if (row.awaitingApproval) status = 'awaiting';
+    // 「只探测过」必须与「还没碰过」分开：ANALYZE 全程是只读，两者此前都显示
+    // 「待开始」，运营员看不出 Agent 究竟走没走到这一步。这里仍不点亮「已完成」
+    // ——只读不能证明阶段收敛——但如实标出「已探测」。
+    else if (row.writes === 0 && row.reads > 0) status = 'probed';
     else if (row.writes === 0) status = 'pending';
     else if (row.outcome === 'complete') status = 'done';
     else if (row.outcome === 'rejected') status = 'failed';

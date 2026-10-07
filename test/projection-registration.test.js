@@ -104,7 +104,7 @@ test('regression: projection folds a real event stream into readable stage state
       data: { message: { toolCallId: id }, meta: { outcome } },
     });
 
-    // 只读探测不点亮阶段；写操作成功才 done；被拒是 failed。
+    // 只读探测不点亮阶段（但标「已探测」）；写操作成功才 done；被拒是 failed。
     const view = registry.drive('geoWorkflow', [
       call('r1', 'get_evidence_sources', 1),
       result('r1', 'complete', 2),
@@ -114,7 +114,7 @@ test('regression: projection folds a real event stream into readable stage state
       result('w2', 'rejected', 6),
     ]);
     const byKey = Object.fromEntries(view.stages.map(s => [s.key, s]));
-    assert.equal(byKey.evidence.status, 'pending', 'read-only must not light a stage');
+    assert.equal(byKey.evidence.status, 'probed', 'read-only marks probed, never done');
     assert.equal(byKey.evidence.reads, 1);
     assert.equal(byKey.fact.status, 'done');
     assert.equal(byKey.fact.writes, 1);

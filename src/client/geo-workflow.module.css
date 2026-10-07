@@ -237,8 +237,9 @@
   white-space: nowrap;
 }
 
-/* ——— 六态 ———
-   待开始保持静默（无状态条、无强调色），注意力留给进行中与等审批。
+/* ——— 七态 ———
+   待开始与已探测都保持静默（无状态条、无强调色），注意力留给进行中与等审批；
+   两者只靠左侧标记与文字深浅区分：已探测证明 Agent 走到过这一步。
    其余状态各有语义色；圆圈在状态类首次应用时脉冲一次——CSS 在 animation
    属性变化时重播，所以「刚刚完成 / 刚刚被拒」是零 JS 的确认动效。 */
 @keyframes statusPulse {
@@ -252,6 +253,17 @@
 
 .cellPending .cellDot {
   background: var(--dsw-alias-border-l3);
+}
+
+/* 已探测：Agent 只读过、没写过。比「待开始」多一层存在感，但不冒充「已完成」
+   ——只染左侧标记与状态文字，不加底色、不脉冲。 */
+.cellProbed {
+  border-left-color: var(--dsw-alias-border-l3);
+}
+
+.cellProbed .cellStatus {
+  color: var(--dsw-alias-label-secondary, var(--dsw-alias-label-caption));
+  font-weight: 500;
 }
 
 .cellDone {

@@ -78,15 +78,25 @@ test('a write call opens active and closes done on its complete result', () => {
   assert.equal(statusOf(stageView(state), 'evidence'), 'done');
 });
 
-test('read-only calls accumulate reads without lighting any stage', () => {
+test('read-only calls mark a stage as probed without ever lighting it done', () => {
   let state = { inheritedEventCount: 0, lastSeq: 0, projectIds: [], approvals: {}, stages: {} };
   for (const operation of ['get_projects_by_projectid', 'get_evidence_sources', 'get_questions']) {
     state = foldToolCall(state, { callId: `r-${operation}`, operation, seq: 1, isWrite: false });
     state = foldToolResult(state, { callId: `r-${operation}`, outcome: 'complete' });
   }
   const view = stageView(state);
-  // 一整轮只读感知之后没有任何阶段被点亮——这是本次修复的核心断言。
-  assert.ok(view.stages.every(stage => stage.status === 'pending'), JSON.stringify(view.stages));
+  // 只读不推进阶段：一整轮纯感知之后，没有任何阶段被点亮成「已完成」或「进行中」。
+  assert.equal(view.stages.some(stage => stage.status === 'done'), false, JSON.stringify(view.stages));
+  assert.equal(view.stages.some(stage => stage.status === 'active'), false);
+  // 但「走到过」与「没碰过」必须分开：读过的那三格标「已探测」，其余仍是「待开始」。
+  assert.deepEqual(
+    view.stages.filter(stage => stage.status === 'probed').map(stage => stage.key),
+    ['project', 'evidence', 'question'],
+  );
+  assert.deepEqual(
+    view.stages.filter(stage => stage.status === 'pending').map(stage => stage.key),
+    ['fact', 'content', 'publish', 'detect', 'report'],
+  );
   assert.equal(rowOf(view, 'project').reads, 1);
   assert.equal(rowOf(view, 'evidence').reads, 1);
   assert.equal(rowOf(view, 'question').reads, 1);
