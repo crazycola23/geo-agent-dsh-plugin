@@ -1,5 +1,6 @@
-/* 主视图宿主是固定高度的 flex 列且不提供滚动——页面根节点必须自当滚动容器
-   （与官方 schedule 页 pageScroll 同款：flex:1 + min-height:0 + overflow:auto）。 */
+/* 主视图宿主容器形态不确定：标准 flex 列时靠 flex:1+min-height:0 收缩滚动；
+   非 flex 容器时靠 max-height(视口兜底) 约束。两条路都保证 overflow-y 生效。
+   （官方 schedule 页 pageScroll 同款 flex 模式 + 视口兜底帽。） */
 .page {
   display: flex;
   flex-direction: column;
@@ -7,8 +8,10 @@
   width: 100%;
   max-width: 980px;
   margin: 0 auto;
-  flex: 1;
+  flex: 1 1 auto;
   min-height: 0;
+  height: 100%;
+  max-height: calc(100dvh - 120px);
   overflow-y: auto;
   scrollbar-gutter: stable;
   padding-bottom: 24px;
