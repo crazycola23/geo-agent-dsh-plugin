@@ -80,8 +80,6 @@ test('generated catalog follows project token scope policy and excludes manageme
     assert.ok(allowedScopes.has(operation.permission), `${operation.method} ${operation.path} exceeds token scope policy`);
   }
   for (const name of [
-    'get_projects',
-    'post_projects',
     'get_projects_by_projectid_api_tokens',
     'post_projects_by_projectid_api_tokens',
     'delete_projects_by_projectid_api_tokens_by_tokenid',
@@ -91,5 +89,38 @@ test('generated catalog follows project token scope policy and excludes manageme
   ]) {
     assert.equal(catalog.operations[name], undefined, `${name} must not be exposed to DSH tools`);
   }
+  // 2026-10-07：托管要求 Agent 能创建项目并维护其客户主体。两类端点共用
+  // geo:project:create / geo:project:view，已从 excludedToolPaths 摘除 /projects
+  // 并把 geo:project:create 加进 allowedScopes；token 管理、成员、采集账号仍保持关闭。
+  for (const name of ['get_projects', 'post_projects', 'get_customers', 'post_customers']) {
+    assert.ok(catalog.operations[name], `${name} must be exposed for hosted project & customer maintenance`);
+  }
   assert.ok(catalog.excluded.some(operation => operation.path === '/auth/project-token-context'));
+});
+
+test('snowflake projectId passes as a digit string on integer-declared query fields', () => {
+  // get_platform_accounts / get_media_favorites 的 projectId 声明为 integer，但 19 位雪花 ID
+  // 超出 JS 安全整数范围：数字形式会静默丢精度，字符串形式必须被接受，否则这两个只读端点
+  // 永远报「应为 integer 类型」而无法调用。
+  const operation = catalog.operations.get_platform_accounts;
+  const accepted = validateOperationArgs(operation, {
+    pathParams: {},
+    query: { projectId: '2097157799925620737' },
+    headers: {},
+  }, catalog);
+  assert.deepEqual(accepted, []);
+
+  const malformed = validateOperationArgs(operation, {
+    pathParams: {},
+    query: { projectId: '20971577999256207xx' },
+    headers: {},
+  }, catalog);
+  assert.ok(malformed.some(error => error.includes('integer')));
+
+  const belowMinimum = validateOperationArgs(operation, {
+    pathParams: {},
+    query: { projectId: '0' },
+    headers: {},
+  }, catalog);
+  assert.ok(belowMinimum.some(error => error.includes('不能小于')));
 });

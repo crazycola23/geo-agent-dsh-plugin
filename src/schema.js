@@ -17,6 +17,20 @@ function resolveSchema(schema, schemas) {
   return current;
 }
 
+// GEO 的雪花 ID 是 19 位，超出 JS 安全整数范围：JSON number 会静默丢精度（契约里对
+// articleVersionId 等处有明文提示）。所以 integer/number 字段必须同时接受纯数字字符串，
+// 否则 projectId 这类字段根本调不通——数字形式失真，字符串形式又被类型校验挡回。
+const integerText = /^-?\d+$/;
+const numericText = /^-?\d+(?:\.\d+)?$/;
+
+function isIntegerText(value) {
+  return typeof value === 'string' && integerText.test(value);
+}
+
+function isNumericText(value) {
+  return typeof value === 'string' && numericText.test(value);
+}
+
 function matchesType(value, type) {
   if (Array.isArray(type)) return type.some(item => matchesType(value, item));
   switch (type) {
@@ -24,8 +38,8 @@ function matchesType(value, type) {
     case 'object': return isPlainObject(value);
     case 'array': return Array.isArray(value);
     case 'string': return typeof value === 'string';
-    case 'integer': return typeof value === 'number' && Number.isInteger(value);
-    case 'number': return typeof value === 'number' && Number.isFinite(value);
+    case 'integer': return (typeof value === 'number' && Number.isInteger(value)) || isIntegerText(value);
+    case 'number': return (typeof value === 'number' && Number.isFinite(value)) || isNumericText(value);
     case 'boolean': return typeof value === 'boolean';
     default: return true;
   }
@@ -86,12 +100,14 @@ function validateAt(value, rawSchema, path, schemas, issues, stack = new Set()) 
       catch { issues.push(`${path}：字段定义里的格式规则本身无效`); }
     }
   }
-  if (typeof value === 'number') {
-    if (typeof schema.minimum === 'number' && value < schema.minimum) issues.push(`${path}：不能小于 ${schema.minimum}`);
-    if (typeof schema.maximum === 'number' && value > schema.maximum) issues.push(`${path}：不能大于 ${schema.maximum}`);
-    if (typeof schema.exclusiveMinimum === 'number' && value <= schema.exclusiveMinimum) issues.push(`${path}：必须大于 ${schema.exclusiveMinimum}`);
-    if (typeof schema.exclusiveMaximum === 'number' && value >= schema.exclusiveMaximum) issues.push(`${path}：必须小于 ${schema.exclusiveMaximum}`);
-    if (typeof schema.multipleOf === 'number' && schema.multipleOf !== 0 && value % schema.multipleOf !== 0) issues.push(`${path}：必须是 ${schema.multipleOf} 的整数倍`);
+  // 数字与数字字符串统一按数值校验范围，避免放宽类型后绕过 minimum/maximum 检查。
+  const numericValue = typeof value === 'number' ? value : (isNumericText(value) ? Number(value) : undefined);
+  if (numericValue !== undefined) {
+    if (typeof schema.minimum === 'number' && numericValue < schema.minimum) issues.push(`${path}：不能小于 ${schema.minimum}`);
+    if (typeof schema.maximum === 'number' && numericValue > schema.maximum) issues.push(`${path}：不能大于 ${schema.maximum}`);
+    if (typeof schema.exclusiveMinimum === 'number' && numericValue <= schema.exclusiveMinimum) issues.push(`${path}：必须大于 ${schema.exclusiveMinimum}`);
+    if (typeof schema.exclusiveMaximum === 'number' && numericValue >= schema.exclusiveMaximum) issues.push(`${path}：必须小于 ${schema.exclusiveMaximum}`);
+    if (typeof schema.multipleOf === 'number' && schema.multipleOf !== 0 && numericValue % schema.multipleOf !== 0) issues.push(`${path}：必须是 ${schema.multipleOf} 的整数倍`);
   }
   if (Array.isArray(value)) {
     if (Number.isInteger(schema.minItems) && value.length < schema.minItems) issues.push(`${path}：至少需要 ${schema.minItems} 项`);
