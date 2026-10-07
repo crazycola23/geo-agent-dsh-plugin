@@ -15,6 +15,10 @@
 
 **响应形状约定（2026-10-06 实测）**：分页列表返回**顶格** `rows` / `total`（TableDataInfo），不在 `data` 里；非分页返回 `{code,msg,data}`。`get_facts_ai_extract_latest` 必传 `evidenceSourceIds`（**复数**字段名，逗号分隔的资料 id）。业务校验错误统一 `HTTP 400 + bizCode=GEO-40001 + details.field`，可直接用于自诊修正参数。
 
+**项目 ID 纪律**：19 位 projectId 一律从 `geo_approval_policy` 返回的 `configuredProjects` 复制（或 `get_projects_by_projectid` 校准），**禁止凭记忆手打**——长数字转写错误会被防串号保护拦截并浪费轮次。
+
+**「No endpoint」= 契约-部署漂移（2026-10-07 实测）**：收到 `{"code":404,"msg":"No endpoint <METHOD> <path>."}` 说明契约里有、部署后端未实现该端点（例：`GET /publish-targets` 截至本日服务端无 controller）。处置：该项标 **blocked（服务端未实现）**，优先改用契约内替代读取路径（发布资源用 `get_media_catalog_resources`，实测可用）；禁止反复重试参数，也禁止当作参数错误。
+
 **项目串号（常见自伤，2026-10-07 实测）**：`geo_api` 强制校验「选中的令牌项目」与 path/query/body 里的 `projectId` 完全一致，写错即拒（"Selected project X does not match projectId in query (Y)"）。这是防串号保护，不是插件故障——**处置只有一个：用选定项目的正确 projectId 原样重试**；两次仍失败先调 `get_projects_by_projectid` 校准 ID，仍不行才降级（跳过该项或请操作员从界面提供数据）。**禁止**把串号错误当成插件缺陷去"修插件"或绕开校验。
 
 1. 项目档案与预算：项目档案（含启动状态）、平台列表、项目预算与费用余量；

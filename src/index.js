@@ -319,6 +319,8 @@ export function apply(ctx, config = {}) {
       const settings = currentSettings();
       const policy = key => (settings[key] === 'agent' ? 'agent' : 'ask');
       return {
+        // 已配置项目清单：给 agent 一个可复制的 ID 权威来源，避免凭记忆转写 19 位 projectId 出错。
+        configuredProjects: (settings.projects ?? []).map(project => ({ projectId: project.projectId, name: project.name || '' })),
         policies: Object.fromEntries(Object.keys(POLICY_DOMAINS).map(key => [key, policy(key)])),
         domains: Object.entries(POLICY_DOMAINS).map(([key, operations]) => ({
           key,
