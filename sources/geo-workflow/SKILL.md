@@ -36,6 +36,25 @@ description: Run internal GEO operations through the authenticated DSH GEO tools
 - 数字一律取实际返回值，不估；未知就写未知
 - 不写接口名、调用次数、幂等键和时间戳——那些是日志的事
 
+## 长耗时任务
+
+GEO 的**内容生成**与**检测执行**是异步长任务（同类内容生成实测 2.5–6 分钟）。提交后**不要原地阻塞轮询**——那会占住整轮对话（实测有一次干等了 29 分钟）。
+
+拿到 `executionId` / 任务 ID 后，用 DSH 自带的 `schedule_create` 挂一个定时回查，然后结束本轮去做别的：
+
+```text
+schedule_create({
+  after_seconds: 240,   // 按同类任务的历史耗时，宁可设大一点
+  title: '回查内容生成',
+  prompt: '检查内容生成任务 <executionId> 是否已产出，继续 GEO 流程的下一步',
+})
+```
+
+- 定时到点回来后**先查任务状态**；仍未完成就再挂一次，不要在同一个循环里反复短睡。
+- 只有同步请求（大部分 GET、预览、上传）才当场等——它们秒级返回。
+- 定时回查不等于免检：产出仍可能失败或部分产出，按 [auto-run.md](references/auto-run.md) 的验收口径处理。
+- 等待期间用 `geo_progress_note` 写一条「已提交、等产出」，运营员才知道当前卡在哪（见上一节）。
+
 ## 参考
 
 - 全流程、业务确认点与首版边界：[workflow.md](references/workflow.md)

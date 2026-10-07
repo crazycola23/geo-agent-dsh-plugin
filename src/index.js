@@ -17,7 +17,23 @@ const operationNames = Object.keys(catalog.operations).sort();
 // 它不被一起屏蔽——智能体向人提问（带候选项）依赖它。
 // geo_progress_note 同理属于本插件自己的工具，漏列会让它在隔离打开时被屏蔽，
 // 进度页的说明区就永远空着（dsh-plugin.test.js 对这份清单有精确断言）。
-const toolNames = ['geo_api', 'geo_describe_operation', 'geo_list_evidence_files', 'geo_upload_evidence', 'geo_progress_note', 'geo_connection_status', 'geo_approval_policy', 'ask_user_question'];
+// schedule_* 也是 DSH 自带能力，同样必须放行：GEO 的内容生成 / 检测执行是异步
+// 长任务（实测同类内容生成 2.5–6 分钟），正确做法是提交后挂一个定时回查再回来，
+// 而不是原地阻塞轮询——隔离一旦把它挡掉，这个等待方式就没法用了。
+const toolNames = [
+  'geo_api',
+  'geo_describe_operation',
+  'geo_list_evidence_files',
+  'geo_upload_evidence',
+  'geo_progress_note',
+  'geo_connection_status',
+  'geo_approval_policy',
+  'ask_user_question',
+  'schedule_create',
+  'schedule_list',
+  'schedule_update',
+  'schedule_delete',
+];
 // 写入委派域。每个键对应一个设置项（ask 保持人工审批，显式填 agent 才把该域的
 // 写入交给智能体自行判断）。默认不放行：不属于任何域的操作照旧弹审批。
 // 刻意不纳入的：发布（见下面的 HARD_ASK_WRITES）、资料上传、媒体/对象存储与项目写入。
