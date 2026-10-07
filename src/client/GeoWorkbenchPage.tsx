@@ -204,6 +204,19 @@ function operationLabel(operation: string | undefined): string {
 }
 
 /**
+ * 拒绝原因面向运营员：正文只用能读懂的话，技术报错原文退到 hover 的 title 里
+ * （排查时才需要）。服务端多数报错本身就是中文人话（「稿件版本不存在」），
+ * 原样显示；只有插件本地契约校验与英文技术句需要翻译。
+ */
+function humanizeRejection(reason: string | undefined): string {
+  if (!reason) return ''
+  if (/canonical GEO OpenAPI contract/i.test(reason)) return '提交内容与系统要求不符（已记录）'
+  // 通篇没有中文、又出现连续英文单词 = 英文技术报错，运营员读不懂。
+  if (!/[\u4e00-\u9fa5]/.test(reason) && /[A-Za-z]{4}/.test(reason)) return '系统未接受该提交（已记录）'
+  return reason
+}
+
+/**
  * 订阅所有可见会话的 geoWorkflow 投影，挑出「正在跑或最近跑过 GEO」的那个。
  * 订阅本身是扇入式的：任何会话的投影变化都会触发一次重新挑选。
  */
@@ -382,7 +395,7 @@ export function GeoStageStepper(props: { view?: StageView }): ReactNode {
                   <span className={styles.cellHint}>等待你在审批弹窗中确认</span>
                 ) : null}
                 {stage.status === 'failed' && stage.rejectionReason ? (
-                  <span className={styles.cellReason} title={stage.rejectionReason}>{stage.rejectionReason}</span>
+                  <span className={styles.cellReason} title={stage.rejectionReason}>{humanizeRejection(stage.rejectionReason)}</span>
                 ) : null}
                 {opLabel ? <span className={styles.cellOp}>{opLabel}</span> : null}
               </span>
@@ -408,7 +421,7 @@ export function GeoStageStepper(props: { view?: StageView }): ReactNode {
         <p className={styles.caption} data-status="awaiting">等审批：{awaiting.label}{operationLabel(awaiting.lastOp) ? ` · ${operationLabel(awaiting.lastOp)}` : ''} — 请在审批弹窗中确认后继续。</p>
       ) : null}
       {!awaiting && failed ? (
-        <p className={styles.caption} data-status="failed">被拒：{failed.label}{operationLabel(failed.lastOp) ? ` · ${operationLabel(failed.lastOp)}` : ''}{failed.rejectionReason ? ` — ${failed.rejectionReason}` : ''}</p>
+        <p className={styles.caption} data-status="failed">被拒：{failed.label}{operationLabel(failed.lastOp) ? ` · ${operationLabel(failed.lastOp)}` : ''}{failed.rejectionReason ? ` — ${humanizeRejection(failed.rejectionReason)}` : ''}</p>
       ) : null}
       {!awaiting && !failed && unknown ? (
         <p className={styles.caption} data-status="unknown">待查证：{unknown.label}{operationLabel(unknown.lastOp) ? ` · ${operationLabel(unknown.lastOp)}` : ''} — 结果未确认，请先核对 GEO 记录再重试。</p>
