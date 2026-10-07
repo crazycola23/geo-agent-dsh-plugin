@@ -309,6 +309,56 @@ test('progress notes are capped, dropping the oldest, and blank text is ignored'
   assert.equal(stageView(state).stages.some(stage => stage.calls > 0), false);
 });
 
+test('a connection result carries the token status into the view, per project', () => {
+  let state = { inheritedEventCount: 0, lastSeq: 0, projectIds: [], approvals: {}, notes: [], tokens: {}, stages: {} };
+  state = projectEvent(state, {
+    seq: 5,
+    time: 1759820000000,
+    type: 'tool/result',
+    data: {
+      message: { toolCallId: 'c1' },
+      meta: {
+        kind: 'connection',
+        projectId: '2097157799925620737',
+        expiresAt: '2026-11-05T03:31:51.000Z',
+        tokenName: '万事达',
+        projectName: '测试小8',
+        authenticated: true,
+      },
+    },
+  }, { tagOf, isWrite });
+  state = projectEvent(state, {
+    seq: 6,
+    time: 1759820060000,
+    type: 'tool/result',
+    data: {
+      message: { toolCallId: 'c2' },
+      meta: { kind: 'connection', projectId: '2097157799925620999', expiresAt: '2026-12-01T00:00:00.000Z', authenticated: false },
+    },
+  }, { tagOf, isWrite });
+
+  const view = stageView(state);
+  assert.equal(view.tokens.length, 2, 'each project keeps its own status');
+  const first = view.tokens.find(token => token.projectId === '2097157799925620737');
+  assert.equal(first.expiresAt, '2026-11-05T03:31:51.000Z');
+  assert.equal(first.tokenName, '万事达');
+  assert.equal(first.authenticated, true);
+  assert.equal(first.checkedAt, 1759820000000);
+  // 令牌状态是全局事实，不属于任何阶段：不得推进流程。
+  assert.equal(view.stages.every(stage => stage.writes === 0 && stage.calls === 0), true);
+
+  // 同一项目再次校验：覆盖而不是追加。
+  const again = projectEvent(state, {
+    seq: 7,
+    time: 1759820120000,
+    type: 'tool/result',
+    data: { message: { toolCallId: 'c3' }, meta: { kind: 'connection', projectId: '2097157799925620737', expiresAt: '2027-01-05T00:00:00.000Z', authenticated: true } },
+  }, { tagOf, isWrite });
+  const refreshed = stageView(again).tokens.find(token => token.projectId === '2097157799925620737');
+  assert.equal(refreshed.expiresAt, '2027-01-05T00:00:00.000Z');
+  assert.equal(stageView(again).tokens.length, 2);
+});
+
 test('a read result never settles a stage and duplicate results are idempotent', () => {
   let state = { inheritedEventCount: 0, lastSeq: 0, projectIds: [], approvals: {}, stages: {} };
   state = foldToolCall(state, { callId: 'r1', operation: 'get_questions', seq: 1, isWrite: false });
