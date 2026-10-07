@@ -2,7 +2,7 @@
   "catalogVersion": 2,
   "source": {
     "file": "scrm-specs/30-contracts/08-openapi.yaml",
-    "sha256": "e4b74eda7e5839a5c824b1680d4e203d8ea252936295997b0503501e8a72fefe"
+    "sha256": "03e47c6e16a891f071a78b968f26db4a275465938ab9a4c7c337e1fc0234be10"
   },
   "serverPath": "/geo",
   "securitySchemes": {
@@ -7674,8 +7674,9 @@
       ],
       "properties": {
         "articleVersionId": {
-          "type": "integer",
-          "minimum": 1
+          "type": "string",
+          "minLength": 1,
+          "description": "19 位稿件版本 ID；按字符串传递（与 PublishPreviewCreate 一致）——数字形式超出 JS 安全整数范围，客户端序列化会静默丢精度"
         },
         "providerResourceId": {
           "type": "string",
