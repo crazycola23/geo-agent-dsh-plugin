@@ -93,7 +93,7 @@ test('connection status rejects a token bound to a different project', async () 
   assert.equal((await provider.status('101')).authenticated, true);
   const status202 = await provider.status('202');
   assert.equal(status202.authenticated, false);
-  assert.match(status202.error, /bound to GEO project 101, not project 202/);
+  assert.match(status202.error, /实际绑定的项目是 101/);
   assert.doesNotMatch(JSON.stringify(status202), /geop_[A-Za-z0-9_-]{32,}/);
 });
 
@@ -105,8 +105,8 @@ test('missing, malformed, or unconfigured project tokens stop before network dis
     getSettings: () => projectSettings('101'),
     fetchImpl,
   });
-  await assert.rejects(missing.getAccessToken('101'), /no project API token configured/);
-  await assert.rejects(missing.getAccessToken('202'), /not configured in GEO 工作台/);
+  await assert.rejects(missing.getAccessToken('101'), /还没有配置访问令牌/);
+  await assert.rejects(missing.getAccessToken('202'), /还没有在 GEO 工作台里登记/);
 
   const invalidValues = new Map();
   setProjectToken(invalidValues, '101', 'not-a-project-token');
@@ -115,8 +115,8 @@ test('missing, malformed, or unconfigured project tokens stop before network dis
     getSettings: () => projectSettings('101'),
     fetchImpl,
   });
-  await assert.rejects(malformed.getAccessToken('101'), /no valid project API token/);
-  await assert.rejects(malformed.getAccessToken('invalid-id'), /valid GEO projectId/);
+  await assert.rejects(malformed.getAccessToken('101'), /格式无效/);
+  await assert.rejects(malformed.getAccessToken('invalid-id'), /有效的项目编号/);
 
   const insecure = createGeoAuthProvider({
     credentials: credentialStore(new Map([[projectCredentialRefs('101').apiToken, tokenFor('valid-project-token')]])),
@@ -141,7 +141,7 @@ test('connection status never returns a rejected bearer', async () => {
   });
   const status = await provider.status('101');
   assert.equal(status.authenticated, false);
-  assert.match(status.error, /expired, revoked, or invalid/);
+  assert.match(status.error, /已过期、已被撤销/);
   assert.equal(status.tokenValueExposed, false);
   assert.doesNotMatch(JSON.stringify(status), new RegExp(token));
 });
@@ -178,7 +178,7 @@ test('an unusable gateway prefix stops the token check before dispatch', async (
 
   const status = await provider.status('101');
   assert.equal(status.authenticated, false);
-  assert.match(status.error, /single path prefix/);
+  assert.match(status.error, /只能是一段路径/);
   assert.equal(calls, 0);
 });
 

@@ -13,18 +13,16 @@ import { emptyStageState, foldToolCall, foldToolResult, GEO_EVIDENCE_OPERATION, 
 const here = dirname(fileURLToPath(import.meta.url));
 const catalog = JSON.parse(readFileSync(resolve(here, 'generated', 'openapi.catalog.json'), 'utf8'));
 const operationNames = Object.keys(catalog.operations).sort();
-// ask_user_question 是 DSH 核心内置工具；列入白名单是为了 restrictTools
-// 隔离打开时它不被一起屏蔽——agent 向人提问（带候选项）依赖它。
-// geo_progress_note 同理属于本插件自有工具，漏列会让它在隔离打开时被屏蔽，
+// ask_user_question 是 DSH 自带的核心工具；列进白名单是为了在工具隔离打开时
+// 它不被一起屏蔽——智能体向人提问（带候选项）依赖它。
+// geo_progress_note 同理属于本插件自己的工具，漏列会让它在隔离打开时被屏蔽，
 // 进度页的说明区就永远空着（dsh-plugin.test.js 对这份清单有精确断言）。
 const toolNames = ['geo_api', 'geo_describe_operation', 'geo_list_evidence_files', 'geo_upload_evidence', 'geo_progress_note', 'geo_connection_status', 'geo_approval_policy', 'ask_user_question'];
-// Write-delegation domains. Each key maps to one settings policy (`ask` keeps
-// the operator prompt, the explicit 'agent' value delegates the domain's
-// writes to the running agent's judgment). Default-deny for automation: an
-// operation in no domain keeps its prompt. Deliberately absent: publishing
-// (HARD_ASK_WRITES below), evidence, media/OSS and project writes.
+// 写入委派域。每个键对应一个设置项（ask 保持人工审批，显式填 agent 才把该域的
+// 写入交给智能体自行判断）。默认不放行：不属于任何域的操作照旧弹审批。
+// 刻意不纳入的：发布（见下面的 HARD_ASK_WRITES）、资料上传、媒体/对象存储与项目写入。
 const POLICY_DOMAINS = {
-  // Fact lifecycle: revisions and extraction-candidate adjudication.
+  // 事实生命周期：修订与提取候选的裁定。
   factConfirmPolicy: new Set([
     'post_facts',
     'post_fact_revisions',
@@ -36,8 +34,7 @@ const POLICY_DOMAINS = {
     'post_facts_ai_extract_by_runid_candidates_by_candidateid_reject',
     'post_facts_ai_extract_by_runid_candidates_batch_confirm',
   ]),
-  // Reversible content preparation: questions, query panels, content elements,
-  // and AI extraction runs that only produce candidates.
+  // 可回退的内容准备：问题、问题面板、内容要素，以及只产出候选的提取任务。
   contentPrepPolicy: new Set([
     'post_facts_ai_extract',
     'post_facts_ai_extract_by_runid_retry',
@@ -53,7 +50,7 @@ const POLICY_DOMAINS = {
     'post_content_elements_by_elementid_ai_split',
     'post_content_elements_by_elementid_enabled',
   ]),
-  // Draft production: spends LLM budget but never leaves the platform.
+  // 稿件生产：消耗模型额度，但不会离开平台。
   contentGenerationPolicy: new Set([
     'post_content_generation_tasks',
     'put_content_generation_tasks_by_id',
@@ -62,8 +59,8 @@ const POLICY_DOMAINS = {
     'post_content_generation_tasks_by_id_cancel',
     'post_article_card_compose',
   ]),
-  // Detection runs spend the project's detect budget bucket; the bucket is a
-  // server-side hard stop and this policy only removes the operator prompt.
+  // 检测运行会花掉项目的检测预算桶；预算由服务端硬拦，这个档位只决定要不要
+  // 每次都弹人工审批。
   detectionPolicy: new Set([
     'post_detection_plans',
     'post_detection_plans_by_id_execute',
@@ -71,8 +68,7 @@ const POLICY_DOMAINS = {
     'post_detection_runs_by_runid_pause',
     'post_detection_attempts_by_id_retry',
   ]),
-  // Reporting: internal revisions, rendering and rule-governed recovery with
-  // the original request and idempotency key.
+  // 报告：内部修订、渲染，以及按规则用原请求与原幂等键做的恢复。
   reportPolicy: new Set([
     'post_customer_geo_reports',
     'post_customer_geo_reports_by_reportid_retry',
@@ -83,17 +79,16 @@ const POLICY_DOMAINS = {
     'post_report_revisions_by_id_artifacts_render',
   ]),
 };
-// Writes that move money or publish externally. Checked before any policy
-// lookup so a future domain edit cannot silently cover them.
+// 会花钱或对外发布的写入。先于任何档位判断，这样将来改动域划分也不会
+// 悄悄把它们包进去。
 const HARD_ASK_WRITES = new Set([
   'post_publish_records_confirm',
   'post_publish_records_by_id_republish',
   'post_publish_records_by_id_cancel',
   'post_publish_records_manual',
 ]);
-// Query-shaped POSTs with no external side effect: quote previews and provider
-// order lookups. Always allowed so the agent can prepare an exact preview for
-// the operator and reconcile unknown outcomes per the idempotency rules.
+// 查询形态、对外没有副作用的写入：报价预览与订单回执查询。始终放行，
+// 这样智能体才能给运营员准备准确的预览，并按幂等规则核对未知结果。
 const SIDE_EFFECT_FREE_WRITES = new Set([
   'post_publish_records_preview',
   'post_publish_records_preview_from_resource',
@@ -137,23 +132,21 @@ export async function geoApprovalDecision(execution, next, apiCatalog = catalog,
     const prompt = `确认上传 GEO 资料：项目 ${projectId}，文件 ${fileName}。将从已配置的投递目录读取文件并提交到 GEO。`;
     return {
       kind: 'ask',
-      reason: 'GEO evidence upload requires explicit operator approval',
+      reason: '上传 GEO 资料需要操作员明确批准',
       displayReason: { en: `Approve GEO evidence upload for project ${projectId}, file ${fileName}. The staged file will be read and uploaded.`, zh_CN: prompt },
     };
   }
   if (execution.name !== 'geo_api') return next();
   const operationName = execution.arguments?.operation;
   const operation = apiCatalog.operations[operationName];
-  if (!operation) return { kind: 'deny', reason: 'GEO operation is not present in the generated OpenAPI allowlist' };
+  if (!operation) return { kind: 'deny', reason: 'GEO 操作不在已生成的开放操作清单里，已拒绝执行' };
   if (operation.requestBody?.contentType && operation.requestBody.contentType !== 'application/json') {
-    return { kind: 'deny', reason: 'Use the dedicated constrained tool for this non-JSON GEO operation' };
+    return { kind: 'deny', reason: '这个非 JSON 操作必须走它专用的受限工具' };
   }
   if (!isWriteOperation(apiCatalog, operationName)) return next();
-  // Side-effect-free query-shaped POSTs pass unconditionally: previews for the
-  // operator and order lookups for unknown-outcome reconciliation.
+  // 没有副作用的查询型写入无条件放行：给运营员看的预览，以及核对未知结果的订单查询。
   if (SIDE_EFFECT_FREE_WRITES.has(operationName)) return next();
-  // Hard red line: money-moving and externally-publishing writes always keep
-  // their prompt, regardless of any configured policy.
+  // 红线：花钱和对外发布的写入永远保留人工审批，不受任何档位设置影响。
   const delegated = !HARD_ASK_WRITES.has(operationName)
     && Object.entries(POLICY_DOMAINS).some(([policyKey, operations]) => operations.has(operationName) && settings?.[policyKey] === 'agent');
   if (delegated) return next();
@@ -161,22 +154,20 @@ export async function geoApprovalDecision(execution, next, apiCatalog = catalog,
   const prompt = `请审批 GEO 写操作 ${operation.method} ${operation.path}（${operation.summary}）。关键参数：${actionSummary}。服务端仍会校验权限。`;
   return {
     kind: 'ask',
-    reason: `GEO write operation requires explicit operator approval: ${operation.name}`,
+    reason: `GEO 写操作需要操作员明确批准：${operation.name}`,
     displayReason: { en: `Approve GEO ${operation.method} ${operation.path} (${operation.name}). Key arguments: ${actionSummary}. GEO still enforces authorization.`, zh_CN: prompt },
   };
 }
 
 /**
- * The DSH tool runtime snapshots a tool's return value as lossless JSON *before*
- * rendering it (dsh-tools `snapshotToolValue`), and that snapshot rejects any own
- * enumerable key whose value is `undefined`. An absent optional field must therefore
- * be an omitted key, not an `undefined` value — otherwise the whole call fails before
- * the operator or the model sees anything, with a message about JSON rather than
- * about the GEO error that actually caused the field to be absent.
+ * DSH 的工具运行时会在渲染之前把工具返回值快照成无损 JSON（dsh-tools 的
+ * `snapshotToolValue`），而那份快照不接受值为 `undefined` 的自身可枚举键。
+ * 因此可选字段缺席时必须是「键不存在」，不能是「键的值是 undefined」——
+ * 否则整次调用会在任何人和模型看到结果之前就失败，给出的还是关于 JSON 的
+ * 报错，而不是真正导致字段缺席的那个 GEO 错误。
  *
- * The output contract has no normalize hook, so every tool goes through this wrapper:
- * it drops absent-valued own keys recursively and leaves real values (null, false, 0,
- * empty string) untouched.
+ * 输出契约没有归一化钩子，所以每个工具都过这一层包装：递归丢掉值为 undefined
+ * 的自身键，真实取值（null、false、0、空字符串）原样保留。
  */
 function defineGeoTool(definition) {
   return defineTool({
@@ -223,7 +214,7 @@ function geoResultMeta(kind, readOperation, readProjectId) {
   };
 }
 
-/** Deep-copy a JSON-shaped value, omitting own keys whose value is `undefined`. */
+/** 深拷贝一份 JSON 形状的值，丢掉值为 undefined 的自身键。 */
 function stripUndefined(value) {
   if (value === null || typeof value !== 'object') return value;
   if (Array.isArray(value)) return value.map(stripUndefined);
@@ -242,12 +233,12 @@ export { Config };
 
 export function apply(ctx, config = {}) {
   if (!ctx.tools?.register || !ctx.agents?.list || typeof ctx.on !== 'function' || typeof ctx.effect !== 'function') {
-    throw new Error('GEO DSH plugin requires the DSH 0.2.0-rc.2 tools and agents runtimes, effect lifecycle, and event hooks');
+    throw new Error('GEO 插件需要 DSH 0.2.0-rc.2 的工具与智能体运行时、生命周期钩子和事件钩子');
   }
 
   const currentSettings = () => pluginSettings(config);
-  // The gateway prefix is a per-instance setting, not part of the OpenAPI contract,
-  // so it reaches both the API client and the token check through the settings snapshot.
+  // 转发路径前缀是单个实例的配置，不属于接口契约，所以它通过配置快照同时传到
+  // 接口客户端和令牌校验两处。
   const auth = createGeoAuthProvider({
     credentials: ctx.credentials,
     tokenPrefix: catalog.projectApiTokenPolicy.tokenPrefix,
@@ -257,14 +248,14 @@ export function apply(ctx, config = {}) {
 
   ctx.tools.register(defineGeoTool({
     name: 'geo_api',
-    description: 'Call one fixed GEO API operation from the generated OpenAPI allowlist. projectId selects that project’s directly configured GEO project API token; if the operation also carries projectId in path/query/body, it must match. Use geo_describe_operation first when you need exact request fields. Every non-GET request is shown to the operator for DSH approval before dispatch. Never repeat a call with unknown outcome until the matching GEO object or order has been checked.',
+    description: '调用一个固定的 GEO 接口操作（取自已生成的接口清单）。projectId 用来选用哪个项目的访问令牌；如果这次请求的地址、查询条件或请求内容里也带 projectId，两者必须完全一致。需要确切的请求字段时，先用 geo_describe_operation 查看契约。所有非只读请求在派发之前都会请操作员确认。结果未知的调用，在核对到对应的 GEO 记录或订单之前，不要重复发起。',
     parameters: {
-      operation: { type: 'string', enum: operationNames, required: true, description: 'Exact operation name from the generated GEO OpenAPI catalog.' },
-      projectId: { type: 'string', required: true, description: 'GEO project whose project API token is stored in DSH Credentials. Match any projectId included in the operation request. This selector is not sent as an extra GEO field.' },
-      pathParams: { type: 'json', description: 'JSON object containing only the path parameters declared by this operation.' },
-      query: { type: 'json', description: 'JSON object containing only query parameters declared by this operation.' },
-      body: { type: 'json', description: 'Application/json request body matching the current canonical GEO OpenAPI schema.' },
-      idempotencyKey: { type: 'string', description: 'Reuse the prior X-Idempotency-Key when recovering the same request. If omitted on an operation that declares this header, the plugin generates one and returns it.' },
+      operation: { type: 'string', enum: operationNames, required: true, description: '操作名，取自生成的 GEO 接口清单。' },
+      projectId: { type: 'string', required: true, description: '要使用的 GEO 项目——它的访问令牌保存在 DSH 凭据里。请求里带的 projectId 必须与它一致。这个选择器本身不会作为额外字段发给 GEO。' },
+      pathParams: { type: 'json', description: '只包含该操作声明的地址参数的 JSON 对象。' },
+      query: { type: 'json', description: '只包含该操作声明的查询条件的 JSON 对象。' },
+      body: { type: 'json', description: '符合当前 GEO 接口契约的 JSON 请求内容。' },
+      idempotencyKey: { type: 'string', description: '要恢复同一次请求时，沿用之前那个 X-Idempotency-Key。如果该操作声明了这个请求头、而这里不填，插件会自动生成一个并返回。' },
     },
     async execute(args, exec) {
       const settings = currentSettings();
@@ -282,13 +273,13 @@ export function apply(ctx, config = {}) {
 
   ctx.tools.register(defineGeoTool({
     name: 'geo_describe_operation',
-    description: 'Read the generated OpenAPI contract for one GEO operation, including exact path/query parameters, JSON request body shape, permission, idempotency rule, and whether a human approval is required.',
+    description: '查看一个 GEO 操作的接口契约：确切的地址参数与查询条件、请求内容结构、所需权限、幂等要求，以及是否需要人工审批。',
     parameters: {
-      operation: { type: 'string', enum: operationNames, required: true, description: 'Exact operation name from the generated GEO OpenAPI catalog.' },
+      operation: { type: 'string', enum: operationNames, required: true, description: '操作名，取自生成的 GEO 接口清单。' },
     },
     async execute({ operation: operationName }) {
       const operation = catalog.operations[operationName];
-      if (!operation) return { ok: false, error: 'Operation is not in the generated GEO OpenAPI allowlist' };
+      if (!operation) return { ok: false, error: '操作名不在已生成的开放操作清单里。' };
       const description = describeOperation(operation);
       if (description.body?.schema) description.body.schema = schemaSummary(description.body.schema, catalog.schemas);
       return description;
@@ -297,7 +288,7 @@ export function apply(ctx, config = {}) {
 
   ctx.tools.register(defineGeoTool({
     name: 'geo_list_evidence_files',
-    description: 'List only regular .doc, .docx, .pdf, and .txt files directly inside the operator-configured GEO evidence staging directory. Returns file names and byte sizes only; it never reads or returns file contents.',
+    description: '列出投递目录里直接存放的 .doc、.docx、.pdf、.txt 文件。只返回文件名和字节大小，从不读取或返回文件正文。',
     parameters: {},
     async execute() {
       return listStagedEvidenceFiles(currentSettings().evidenceDirectory);
@@ -306,12 +297,12 @@ export function apply(ctx, config = {}) {
 
   ctx.tools.register(defineGeoTool({
     name: 'geo_upload_evidence',
-    description: 'Upload one named GEO evidence file from the operator-configured staging directory. Only a direct-child file with a .doc, .docx, .pdf, or .txt extension is accepted; absolute paths, traversal, and symbolic links are rejected. Uses the canonical multipart endpoint and a stable content-derived idempotency key. DSH asks the operator before upload.',
+    description: '把投递目录里的一个资料文件上传到 GEO。只接受该目录下的单个文件，扩展名限 .doc、.docx、.pdf、.txt；绝对路径、跨目录、快捷方式一律拒绝。使用固定的上传接口，以及按文件内容生成的稳定幂等键。上传之前 DSH 会请操作员确认。',
     parameters: {
-      projectId: { type: 'string', required: true, description: 'Existing GEO project ID. The GEO backend verifies user, tenant, and project access.' },
-      fileName: { type: 'string', required: true, description: 'Exact direct-child file name from geo_list_evidence_files.' },
-      name: { type: 'string', description: 'Optional evidence display name, up to the canonical OpenAPI limit.' },
-      idempotencyKey: { type: 'string', description: 'Optional UUID to reuse for recovery or an intentional new upload. By default a stable UUID is derived from project ID and file contents.' },
+      projectId: { type: 'string', required: true, description: '已存在的 GEO 项目编号。GEO 服务端会校验用户、租户和项目权限。' },
+      fileName: { type: 'string', required: true, description: 'geo_list_evidence_files 返回的确切文件名。' },
+      name: { type: 'string', description: '可选的资料显示名称，长度上限与接口契约一致。' },
+      idempotencyKey: { type: 'string', description: '可选。要在恢复同一次上传或刻意再传一次时使用；默认按项目编号与文件内容生成一个稳定编号。' },
     },
     async execute(args, exec) {
       const settings = currentSettings();
@@ -330,10 +321,10 @@ export function apply(ctx, config = {}) {
   // geo-workflow skill 的「进度同步」一节。
   ctx.tools.register(defineGeoTool({
     name: 'geo_progress_note',
-    description: 'Record one short progress note for the operator-visible GEO progress page. Write the conclusion, not the call sequence: "fact stage done: 7 facts confirmed" rather than listing operations. Use it when a stage finishes, when work is blocked, or when the operator decision is awaited; skip it for single routine reads. Notes are kept with the current session and shown newest-first.',
+    description: '为运营员可见的 GEO 进度页写一条简短说明。写结论，不要写调用流水：例如「事实阶段完成：已确认 7 条事实」，而不是罗列操作名。阶段完成、被卡住、或正在等运营员决定时使用；单次例行读取不必写。说明随当前会话保存，界面按最新在前展示。',
     parameters: {
-      text: { type: 'string', required: true, description: 'One short sentence stating what was done or what is blocked, in the operator UI language.' },
-      stage: { type: 'string', description: 'Optional stage key this note belongs to: project | evidence | fact | question | content | publish | detect | report.' },
+      text: { type: 'string', required: true, description: '一句话，说明做了什么或卡在哪里，用运营员界面的语言写。' },
+      stage: { type: 'string', description: '可选：这条说明属于哪个阶段：project | evidence | fact | question | content | publish | detect | report。' },
     },
     async execute({ text, stage }) {
       return { recorded: true, text, stage };
@@ -342,9 +333,9 @@ export function apply(ctx, config = {}) {
 
   ctx.tools.register(defineGeoTool({
     name: 'geo_connection_status',
-    description: 'Validate one configured GEO project API token against GEO, and report the bound project, token name, scopes, and expiry without displaying the bearer.',
+    description: '校验某个已配置项目的访问令牌，并报告它绑定的项目、令牌名、权限清单和有效期；不会显示令牌本身。',
     parameters: {
-      projectId: { type: 'string', required: true, description: 'Configured GEO project whose project API token should be tested.' },
+      projectId: { type: 'string', required: true, description: '要校验的 GEO 项目——它的访问令牌保存在 DSH 凭据里。' },
     },
     async execute({ projectId }) {
       const settings = currentSettings();
@@ -381,13 +372,13 @@ export function apply(ctx, config = {}) {
 
   ctx.tools.register(defineGeoTool({
     name: 'geo_approval_policy',
-    description: 'Read this plugin approval configuration (no network call): per-domain write policy — ask means every write in the domain shows a DSH operator approval before dispatch, agent means the agent executes writes in the domain by its own judgment — plus the exact operations each domain covers, writes that always require approval regardless of policy (publish confirm-class, evidence upload), query-shaped POSTs that always pass, and tool isolation state. Read it before OpsRun EXECUTE so the decision sheet can annotate which approved items will still prompt.',
+    description: '读取本插件的审批配置（不发网络请求）：每个业务域的写入档位——ask 表示该域每次写入都会先弹 DSH 操作员审批，agent 表示由智能体自行判断执行——以及每个域覆盖的具体操作、无论档位如何都必须人工审批的写入（发布确认类、资料上传）、始终放行的查询型写入，还有工具隔离状态。跑单进入执行阶段之前先读它，决策单才能标注哪些已批准项仍会弹审批。',
     parameters: {},
     async execute() {
       const settings = currentSettings();
       const policy = key => (settings[key] === 'agent' ? 'agent' : 'ask');
       return {
-        // 已配置项目清单：给 agent 一个可复制的 ID 权威来源，避免凭记忆转写 19 位 projectId 出错。
+        // 已配置项目清单：给 agent 一个可复制的项目编号权威来源，避免凭记忆转写 19 位编号出错。
         configuredProjects: (settings.projects ?? []).map(project => ({ projectId: project.projectId, name: project.name || '' })),
         policies: Object.fromEntries(Object.keys(POLICY_DOMAINS).map(key => [key, policy(key)])),
         domains: Object.entries(POLICY_DOMAINS).map(([key, operations]) => ({
@@ -396,10 +387,10 @@ export function apply(ctx, config = {}) {
           operations: [...operations].sort(),
         })),
         hardAskAlways: [...HARD_ASK_WRITES].sort(),
-        evidenceUpload: 'geo_upload_evidence always requires explicit operator approval before dispatch',
+        evidenceUpload: 'geo_upload_evidence 每次派发之前都需要操作员明确批准',
         alwaysAllowedQueryPosts: [...SIDE_EFFECT_FREE_WRITES].sort(),
         restrictTools: settings.restrictTools !== false,
-        note: 'ask = DSH approval per write; agent = agent judgment; any other configured value falls back to ask. Changing policies happens in the GEO 工作台 settings card (运行 tab), never through tools.',
+        note: 'ask = 每次写入都弹 DSH 审批；agent = 由智能体自行判断；其它取值一律按 ask 处理。改档位请到 GEO 工作台的设置卡「运行」标签，不能用工具改。',
       };
     },
   }));
@@ -460,8 +451,9 @@ export function apply(ctx, config = {}) {
         stages: {},
       }),
       // 折叠语义已变（字符串实参 / 只读不推进 / 结果取自 meta / 消费审批事件 /
-      // 新增 AI 主动写的进度说明），stateVersion 必须递增：否则旧的持久化
-      // 检查点行会被 forward-apply 成缺字段的垃圾状态（dsh-session-projection 契约）。
+      // 新增 AI 主动写的进度说明与令牌状态），stateVersion 必须递增：否则旧的
+      // 持久化检查点行会被 forward-apply 成缺字段的垃圾状态
+      // （dsh-session-projection 契约）。
       apply: (state, event) => {
         if (event.seq < state.inheritedEventCount) return state;
         return projectEvent(state, event, {
@@ -507,15 +499,14 @@ export function apply(ctx, config = {}) {
   });
 }
 
-  // Tool-level isolation. Restrict each current and future agent in its own scope
-  // — a global restriction would also mask tools for unrelated agents in a shared
-  // DSH runtime. Because every agent of this runtime is restricted, the behaviour
-  // is correct only inside a dedicated GEO-only DSH home; a shared profile would
-  // lose every unrelated tool. restrictTools (default true) is the switch, and the
-  // condition is announced on startup so a shared-profile install is never silent.
+  // 工具级隔离。逐个在当前与将来的智能体自己的作用域里限制——全局限制会连带
+  // 屏蔽共用 DSH 运行时里无关智能体的工具。因为这个运行时里每个智能体都被限制，
+  // 这套行为只在专用的 GEO 环境里成立；装进共用环境会丢掉所有无关工具。
+  // restrictTools（默认 true）就是开关，启动时会把当前状态明说出来，
+  // 免得共用环境的误装悄悄生效。
   const restrictions = new Map();
   const restrictToolsEnabled = () => currentSettings().restrictTools !== false;
-  /** Drop one agent's restriction, if any. Safe to call repeatedly. */
+  /** 解除某个智能体的限制（如果有）。可以重复调用。 */
   const releaseAgent = (agent) => {
     const dispose = restrictions.get(agent);
     if (dispose === undefined) return;
@@ -523,19 +514,19 @@ export function apply(ctx, config = {}) {
     void dispose();
   };
   const restrictAgent = (agent) => {
-    // Turning the switch off must release agents that are ALREADY restricted, not just
-    // stop restricting new ones — otherwise "off" would not actually restore the tools.
+    // 关掉开关必须解除「已经被限制」的智能体，而不只是不再限制新来的——
+    // 否则「关闭」并不能真正把工具还回去。
     if (!restrictToolsEnabled()) {
       releaseAgent(agent);
       return;
     }
     if (restrictions.has(agent)) return;
     if (typeof agent?.ctx?.tools?.restrict !== 'function' || typeof agent.ctx.effect !== 'function') {
-      throw new Error('GEO DSH plugin requires agent-scoped tool restrictions');
+      throw new Error('GEO 插件需要按智能体作用域的工具限制能力');
     }
     restrictions.set(agent, ctx.effect(() => agent.ctx.effect(() => agent.ctx.tools.restrict({ allow: toolNames }))));
   };
-  /** Reconcile the whole agent set so a settings-card toggle converges without a restart. */
+  /** 对全部智能体做一次收敛，这样设置卡上的开关不用重启就能生效。 */
   const reconcileAgents = () => {
     for (const agent of ctx.agents.list()) restrictAgent(agent);
   };
@@ -548,13 +539,13 @@ export function apply(ctx, config = {}) {
   ctx.on('agent/disposed', ({ agent }) => releaseAgent(agent));
 
   if (restrictToolsEnabled()) {
-    console.warn(`[geo-agent-dsh-plugin] GEO tool isolation is active: every agent in this DSH runtime sees only the ${toolNames.length} GEO tools (${toolNames.join(', ')}). `
-      + 'This is by design in a dedicated GEO DSH home. To keep the GEO tools but stop masking other tools, set config.restrictTools to false on the geo-agent-dsh-plugin row of that profile\'s cordis.patch.yml.');
+    console.warn(`[geo-agent-dsh-plugin] GEO 工具隔离已生效：这个 DSH 运行时里的每个智能体都只能看见这 ${toolNames.length} 个 GEO 工具（${toolNames.join('、')}）。`
+      + '在专用的 GEO 环境里这是设计如此。要保留其它工具、只是不再屏蔽它们，请在该环境 cordis.patch.yml 里 geo-agent-dsh-plugin 那一行把 config.restrictTools 设为 false。');
   }
 
   // 隔离开关的即时收敛。volatile 配置没有变更事件、也不会重启 fiber，
   // 只能用轻量签名轮询（2 秒读一个布尔，无变化即空转）把切换同步给
-  // 已经存在的 Agent；新建/销毁 Agent 仍走上面的生命周期钩子。
+  // 已经存在的智能体；新建/销毁智能体仍走上面的生命周期钩子。
   let appliedRestriction = restrictToolsEnabled();
   ctx.effect(() => {
     const timer = setInterval(() => {

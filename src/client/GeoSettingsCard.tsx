@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import type { en } from './locales.ts'
-// 凭据 ref 与项目 ID 规则必须与插件运行时同源（两处各写一份曾互为漂移隐患）。
+// 凭据引用规则与项目编号规则必须与插件运行时同源（两处各写一份曾互为漂移隐患）。
 import { normalizeProjectId, projectCredentialRefs } from '../project-context.js'
-// 令牌有效期只有 GEO 服务端知道，客户端读不到凭据值也不能调 host 工具；
+// 令牌有效期只有 GEO 服务端知道，客户端读不到凭据值也不能调宿主工具；
 // 这里复用工作台页的会话投影订阅，拿上一次真实校验留下的令牌状态。
 import { tokenSummary, useLatestGeoStage } from './GeoWorkbenchPage.tsx'
 import type { SessionsService, TokenStatus } from './GeoWorkbenchPage.tsx'
@@ -51,9 +51,9 @@ export interface GeoSettingsCardProps {
 function normalizeBasePathInput(input: string): string {
   const value = input.trim()
   if (value === '' || value === '/') return ''
-  if (!value.startsWith('/')) throw new Error('网关路径前缀要以 / 开头，例如 /prod-api。')
+  if (!value.startsWith('/')) throw new Error('转发路径前缀要以 / 开头，例如 /prod-api。')
   if (value.includes('//') || value.includes('\\') || value.includes('?') || value.includes('#')) {
-    throw new Error('网关路径前缀只能是一段路径，不要带查询参数、片段或反斜杠。')
+    throw new Error('转发路径前缀只能是一段路径，不要带查询参数、片段或反斜杠。')
   }
   return value.replace(/\/+$/, '')
 }
@@ -63,21 +63,21 @@ function normalizeOrigin(input: string): string {
   if (!value) throw new Error('请填写 GEO 服务地址。')
   const url = new URL(value.includes('://') ? value : `https://${value}`)
   if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash || url.pathname !== '/') {
-    throw new Error('请填写服务协议、IP/域名和端口，不要填写路径、用户名或查询参数。')
+    throw new Error('请填写协议、地址和端口，不要填写路径、用户名或查询参数。')
   }
   if (url.protocol !== 'https:' && !['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)) {
-    throw new Error('GEO 项目令牌要求 HTTPS；内网 IP 也需要配置 HTTPS。')
+    throw new Error('项目令牌要求使用 HTTPS 地址；内网地址也必须套上 HTTPS。')
   }
   return url.origin
 }
 
-/** 仅做布尔化：合法项目 ID（正整数）与运行时同一套正则来源。 */
+/** 仅做布尔化：合法项目编号（正整数）与运行时同一套正则来源。 */
 function validProjectId(value: string): boolean {
   return normalizeProjectId(value) !== undefined
 }
 
 function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : '保存失败，请检查 DSH 配置服务。'
+  return error instanceof Error ? error.message : '保存失败，请检查 DSH 的配置服务是否正常。'
 }
 
 function draftsFrom(projects: ProjectSettings[] | undefined): ProjectDraft[] {
@@ -137,18 +137,18 @@ function Field(props: {
 async function describeCredentials(credentials: CredentialRemote, refs: string[]): Promise<Record<string, CredentialInfo>> {
   if (refs.length === 0) return {}
   const result = await credentials.describe(refs)
-  if (!result.ok) throw new Error(result.error?.message || '无法读取 DSH 凭据状态。')
+  if (!result.ok) throw new Error(result.error?.message || '读不到 DSH 里保存的凭据状态。')
   return result.value
 }
 
 async function writeCredential(credentials: CredentialRemote, ref: string, value: string): Promise<void> {
   const result = await credentials.set(ref, value)
-  if (!result.ok) throw new Error(result.error?.message || 'DSH 拒绝保存项目令牌。')
+  if (!result.ok) throw new Error(result.error?.message || 'DSH 拒绝保存这个项目的访问令牌。')
 }
 
 async function removeCredential(credentials: CredentialRemote, ref: string): Promise<void> {
   const result = await credentials.unset(ref)
-  if (!result.ok) throw new Error(result.error?.message || 'DSH 拒绝删除项目令牌。')
+  if (!result.ok) throw new Error(result.error?.message || 'DSH 拒绝删除这个项目的访问令牌。')
 }
 
 function CredentialState(props: { label: string; info?: CredentialInfo }): ReactNode {
@@ -207,7 +207,7 @@ export function GeoSettingsCard(props: GeoSettingsCardProps): ReactNode {
 
   useEffect(() => {
     if (!credentials) {
-      setCredentialError('当前 DSH 没有提供凭据设置接口。')
+      setCredentialError('当前 DSH 没有提供凭据设置入口。')
       return
     }
     const refs = refsKey ? refsKey.split('|') : []
@@ -271,7 +271,7 @@ export function GeoSettingsCard(props: GeoSettingsCardProps): ReactNode {
 
   const save = async (): Promise<void> => {
     if (!credentials) {
-      setFailure('当前 DSH 没有提供凭据设置接口，无法安全保存项目令牌。')
+      setFailure('当前 DSH 没有提供凭据设置入口，无法安全保存访问令牌。')
       return
     }
     let origin: string
@@ -296,11 +296,11 @@ export function GeoSettingsCard(props: GeoSettingsCardProps): ReactNode {
     for (const project of projects) {
       const projectId = project.projectId.trim()
       if (!validProjectId(projectId)) {
-        setFailure('每个项目都要填写有效的 GEO 项目 ID（正整数）。')
+        setFailure('每个项目都要填写有效的项目编号（正整数）。')
         return
       }
       if (seenProjectIds.has(projectId)) {
-        setFailure(`项目 ID ${projectId} 重复了；每个项目只能配置一个令牌。`)
+        setFailure(`项目编号 ${projectId} 重复了；每个项目只能配一个令牌。`)
         return
       }
       seenProjectIds.add(projectId)
@@ -313,11 +313,11 @@ export function GeoSettingsCard(props: GeoSettingsCardProps): ReactNode {
       const apiToken = project.apiToken.trim()
       const tokenConfigured = credentialState[refs.apiToken]?.configured === true
       if (!apiToken && !tokenConfigured) {
-        setFailure(`请粘贴为项目 ${projectId} 创建的项目 API 令牌。`)
+        setFailure(`请粘贴为项目 ${projectId} 创建的访问令牌。`)
         return
       }
       if (apiToken && credentialState[refs.apiToken]?.writable === false) {
-        setFailure(`项目 ${projectId} 的令牌由外部管理，无法在此覆盖。`)
+        setFailure(`项目 ${projectId} 的访问令牌由外部管理，不能在这里覆盖。`)
         return
       }
       if (apiToken) credentialWrites.push({ ref: refs.apiToken, value: apiToken })
@@ -378,13 +378,13 @@ export function GeoSettingsCard(props: GeoSettingsCardProps): ReactNode {
           setCredentialState(current => ({ ...current, ...refreshedState }))
           setCredentialError(undefined)
         } catch {
-          setCredentialError('配置写入后无法读取最新凭据状态；请重新打开设置卡核对。')
+          setCredentialError('配置写入之后读不到最新凭据状态；请重新打开设置卡核对。')
         }
       }
       if (projectSettingsSaved) {
-        setFailure(`项目设置已保存，但旧凭据清理未完成：${message}`)
+        setFailure(`项目设置已保存，但旧凭据的清理没做完：${message}`)
       } else if (credentialWritesComplete && credentialWriteAttempted) {
-        setFailure(`项目凭据已保存，但普通设置未全部保存：${message}`)
+        setFailure(`项目凭据已保存，但普通设置没全部保存：${message}`)
       } else if (credentialWriteAttempted) {
         setFailure(`凭据写入结果可能不完整，请核对项目状态后再试：${message}`)
       } else {
@@ -395,8 +395,8 @@ export function GeoSettingsCard(props: GeoSettingsCardProps): ReactNode {
     }
   }
 
-  // 工具级隔离开关：即时生效（直接写本行的 restrictTools），不走「保存配置」那条表单流程。
-  // 开启 = 本实例所有 Agent 只看得见 GEO 工具；关闭 = 立刻恢复本实例原有工具。
+  // 工具隔离开关：即时生效（直接写本行的 restrictTools），不走「保存配置」那条表单流程。
+  // 开启 = 本实例所有智能体只看得见 GEO 工具；关闭 = 立刻恢复本实例原有工具。
   const restrictTools = value.restrictTools !== false
   const setRestriction = async (next: boolean): Promise<void> => {
     setIsolationBusy(true)
@@ -465,8 +465,8 @@ export function GeoSettingsCard(props: GeoSettingsCardProps): ReactNode {
           <div className={styles.section}>
             <h3 className={styles.sectionTitle}>GEO 服务</h3>
             <Field
-              label="GEO 服务 IP / 域名"
-              hint="仅协议、主机和端口"
+              label="GEO 服务地址"
+              hint="只填协议、地址和端口"
               value={apiBaseUrl}
               placeholder="https://192.168.2.110:端口"
               testId="geo-api-base-url"
@@ -475,7 +475,7 @@ export function GeoSettingsCard(props: GeoSettingsCardProps): ReactNode {
             />
             <Field
               label="资料投递目录"
-              hint="仅该目录下的文档可上传。"
+              hint="只有这个目录下的文档可以上传。"
               value={evidenceDirectory}
               placeholder="D:\\geo-evidence"
               testId="geo-evidence-directory"
@@ -485,7 +485,7 @@ export function GeoSettingsCard(props: GeoSettingsCardProps): ReactNode {
             <div className={styles.twoColumns}>
               <Field
                 label="转发路径前缀"
-                hint="经网关转发时填写；直连留空"
+                hint="服务地址前还有一层转发路径时填它，直接访问就留空"
                 value={apiBasePath}
                 placeholder="/prod-api"
                 testId="geo-api-base-path"
@@ -535,7 +535,7 @@ export function GeoSettingsCard(props: GeoSettingsCardProps): ReactNode {
                   <div className={styles.twoColumns}>
                     <Field
                       label="项目编号"
-                      hint="调用工具时使用同一个项目编号。"
+                      hint="AI 跑任务时会用同一个项目编号。"
                       value={project.projectId}
                       placeholder="例如 2100100790457094145"
                       testId={`geo-project-id-${index}`}
@@ -553,7 +553,7 @@ export function GeoSettingsCard(props: GeoSettingsCardProps): ReactNode {
                   </div>
                   <Field
                     label="该项目访问令牌"
-                    hint="写入后不再回显；轮换时先在 GEO 撤销旧令牌，再粘贴新令牌。"
+                    hint="保存后不再显示；换新令牌时先在 GEO 撤销旧的，再粘贴新的。"
                     value={project.apiToken}
                     type="password"
                     placeholder={tokenInfo?.configured ? '已安全保存；留空表示不更改' : '粘贴该项目的访问令牌'}
@@ -581,7 +581,7 @@ export function GeoSettingsCard(props: GeoSettingsCardProps): ReactNode {
                   ) : (
                     <button className={styles.clearButton} type="button" disabled={busy} onClick={() => setConfirmRemoveKey(project.draftKey)}>移除项目</button>
                   )}
-                  {externalManaged ? <p className={styles.hint}>外部管理的凭据需在其来源处轮换或清理。</p> : null}
+                  {externalManaged ? <p className={styles.hint}>这份凭据由外部管理，请到它的来源处更换或清理。</p> : null}
                 </div>
               )
             })}
@@ -661,7 +661,7 @@ export function GeoSettingsCard(props: GeoSettingsCardProps): ReactNode {
                 </div>
               )
             })}
-            <p className={styles.hint}>「自动」授权智能体按判断直接执行该域写入；发布确认类操作始终需要人工审批。</p>
+            <p className={styles.hint}>「自动」= 这类写入交给 AI 自行判断执行；发布确认类操作永远需要人工确认。</p>
             {policyError ? <p className={styles.inlineError}>{policyError}</p> : null}
           </div>
             </>

@@ -42,7 +42,7 @@ test('OpenAPI UUID formats reject malformed idempotency keys', () => {
     headers: { 'X-Idempotency-Key': 'same-file-key' },
     body: { projectId: '42', file: 'brief.pdf' },
   }, catalog);
-  assert.ok(errors.some(error => error.includes('must be a UUID')));
+  assert.ok(errors.some(error => error.includes('UUID')));
 });
 
 test('generated catalog includes current OneGl customer-report operations and omits external delivery', () => {

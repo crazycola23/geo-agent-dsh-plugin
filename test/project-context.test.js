@@ -15,13 +15,13 @@ test('each project has distinct DSH credential references', () => {
     apiToken: 'GEO_PROJECT_101_API_TOKEN',
   });
   assert.notDeepEqual(projectCredentialRefs('101'), projectCredentialRefs('202'));
-  assert.throws(() => projectCredentialRefs('not-a-project'), /positive GEO project identifier/);
+  assert.throws(() => projectCredentialRefs('not-a-project'), /有效的 GEO 项目编号/);
 });
 
 test('project routing requires an explicit target and rejects request/auth scope mismatch', () => {
   assert.equal(resolveProjectSelection(undefined, { query: { projectId: '101' } }).ok, false);
   assert.deepEqual(resolveProjectSelection('101', { pathParams: { projectId: '101' } }), { ok: true, projectId: '101' });
   assert.deepEqual(resolveProjectSelection('101', { query: { projectId: 101 } }), { ok: true, projectId: '101' });
-  assert.match(resolveProjectSelection('101', { body: { projectId: '202' } }).error, /does not match/);
-  assert.match(resolveProjectSelection('101', { pathParams: { projectId: '../202' } }).error, /positive GEO project identifier/);
+  assert.match(resolveProjectSelection('101', { body: { projectId: '202' } }).error, /不一致/);
+  assert.match(resolveProjectSelection('101', { pathParams: { projectId: '../202' } }).error, /有效的 GEO 项目编号/);
 });

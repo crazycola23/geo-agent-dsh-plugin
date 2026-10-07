@@ -51,7 +51,7 @@ test('write request uses fixed GEO route, authenticated operator token, and one 
   assert.equal(captured.redirect, 'manual');
   assert.equal(result.outcome, 'complete');
   assert.equal(result.idempotencyKey, 'request-key-1');
-  assert.equal(result.data.apiKey, '[redacted]');
+  assert.equal(result.data.apiKey, '[已隐去]');
   assert.equal(JSON.stringify(result).includes('secret-token-value'), false);
 });
 
@@ -104,11 +104,11 @@ test('a base path can never redirect the bearer to another origin or add query t
   assert.equal(normalizeBasePath('  /prod-api  '), '/prod-api');
   // Relative, authority-carrying and query-bearing values are rejected outright:
   // each of these would move the request somewhere the settings card never validated.
-  assert.throws(() => normalizeBasePath('prod-api'), /absolute path/);
-  assert.throws(() => normalizeBasePath('//evil.example'), /single path prefix/);
-  assert.throws(() => normalizeBasePath('/prod-api\\x'), /single path prefix/);
-  assert.throws(() => normalizeBasePath('/prod-api?a=1'), /single path prefix/);
-  assert.throws(() => normalizeBasePath('/prod-api#f'), /single path prefix/);
+  assert.throws(() => normalizeBasePath('prod-api'), /以 \/ 开头/);
+  assert.throws(() => normalizeBasePath('//evil.example'), /只能是一段路径/);
+  assert.throws(() => normalizeBasePath('/prod-api\\x'), /只能是一段路径/);
+  assert.throws(() => normalizeBasePath('/prod-api?a=1'), /只能是一段路径/);
+  assert.throws(() => normalizeBasePath('/prod-api#f'), /只能是一段路径/);
 });
 
 test('a rejected base path is refused before any network dispatch', async () => {
@@ -128,7 +128,7 @@ test('a rejected base path is refused before any network dispatch', async () => 
 
 test('model-supplied arbitrary host and invalid request body are rejected before network dispatch', async () => {
   let calls = 0;
-  assert.throws(() => resolveApiOrigin('https://geo.example/other-prefix'), /origin/);
+  assert.throws(() => resolveApiOrigin('https://geo.example/other-prefix'), /只能填协议/);
   const result = await executeGeoOperation({
     catalog: testCatalog(), operationName: 'post_facts',
     args: { body: { projectId: 42, claim: 'x', tenantId: 'other-tenant' } },
@@ -173,7 +173,7 @@ test('server error after a write remains unknown and preserves the original idem
   assert.equal(result.outcome, 'unknown');
   assert.equal(result.status, 500);
   assert.equal(result.idempotencyKey, 'stable-request-500');
-  assert.match(result.error, /reconcil|inspect/i);
+  assert.match(result.error, /核对/);
 });
 
 test('GEO bearer credential is required and never returned to the model', async () => {
@@ -219,6 +219,6 @@ test('string-encoded json parameters that are not valid JSON are rejected before
     fetchImpl: async () => { calls += 1; throw new Error('must not be called'); },
   });
   assert.equal(result.outcome, 'rejected');
-  assert.ok(result.validationErrors.some(error => error.includes('valid JSON')));
+  assert.ok(result.validationErrors.some(error => error.includes('不是合法的 JSON')));
   assert.equal(calls, 0);
 });

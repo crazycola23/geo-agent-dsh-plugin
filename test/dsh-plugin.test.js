@@ -16,7 +16,7 @@ test('every write asks the operator; reads pass without an approval prompt', asy
   }, async () => ({ kind: 'allow' }));
   assert.equal(post.kind, 'ask');
   assert.match(post.displayReason.zh_CN, /POST \/publish-records\/confirm/);
-  assert.match(post.reason, /explicit operator approval/);
+  assert.match(post.reason, /操作员明确批准/);
   assert.match(post.displayReason.zh_CN, /record-7/);
   assert.match(post.displayReason.zh_CN, /101/);
   assert.match(post.displayReason.zh_CN, /quote-3/);
@@ -184,7 +184,7 @@ test('plugin registers the generated API surface and restricts each agent to GEO
   }
   // The isolating configuration must announce itself instead of silently masking tools.
   assert.equal(warnings.length, 1);
-  assert.match(warnings[0], /tool isolation is active/);
+  assert.match(warnings[0], /工具隔离已生效/);
   assert.match(warnings[0], /restrictTools/);
   assert.deepEqual(registered.map(tool => tool.name), ['geo_api', 'geo_describe_operation', 'geo_list_evidence_files', 'geo_upload_evidence', 'geo_progress_note', 'geo_connection_status', 'geo_approval_policy']);
   const expectedRestriction = { allow: ['geo_api', 'geo_describe_operation', 'geo_list_evidence_files', 'geo_upload_evidence', 'geo_progress_note', 'geo_connection_status', 'geo_approval_policy', 'ask_user_question'] };
@@ -318,7 +318,7 @@ test('geo_api sends the selected project bearer directly and never sends the sel
       pathParams: { projectId: '202' },
     }, { signal: undefined });
     assert.equal(mismatch.ok, false);
-    assert.match(mismatch.error, /does not match/);
+    assert.match(mismatch.error, /不一致/);
     assert.equal(requests.length, 2);
   } finally {
     globalThis.fetch = originalFetch;

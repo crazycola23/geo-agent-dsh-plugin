@@ -92,7 +92,7 @@ test('upload network uncertainty returns the same key and never retries', async 
     assert.equal(calls, 1);
     assert.equal(result.outcome, 'unknown');
     assert.match(result.idempotencyKey, /^[0-9a-f-]{36}$/i);
-    assert.match(result.error, /inspect this project’s evidence list/);
+    assert.match(result.error, /请先查这个项目的资料列表/);
   });
 });
 

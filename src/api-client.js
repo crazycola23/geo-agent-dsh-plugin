@@ -27,22 +27,23 @@ function isSupportedEvidenceName(filename) {
     && evidenceMimeTypes.has(extname(filename).toLowerCase());
 }
 
+/** 打开投递目录里的一个资料文件；任何一步不合规都直接拒绝，不发出任何请求。 */
 async function openStagedEvidence(evidenceDirectory, filename) {
   if (typeof evidenceDirectory !== 'string' || evidenceDirectory.trim() === '') {
-    throw new Error('GEO_EVIDENCE_DIRECTORY is not configured');
+    throw new Error('还没有配置资料投递目录（GEO_EVIDENCE_DIRECTORY）。');
   }
   if (!isSupportedEvidenceName(filename)) {
-    throw new Error('fileName must be a direct-child .doc, .docx, .pdf, or .txt file name');
+    throw new Error('文件名必须是投递目录下的单个文件，且扩展名为 .doc、.docx、.pdf 或 .txt。');
   }
 
   const root = await realpath(evidenceDirectory);
   const candidate = resolve(root, filename);
-  if (dirname(candidate) !== root) throw new Error('Evidence file must be directly inside the configured staging directory');
+  if (dirname(candidate) !== root) throw new Error('资料文件必须直接放在已配置的投递目录里，不能带子目录。');
 
   const before = await lstat(candidate);
-  if (before.isSymbolicLink() || !before.isFile()) throw new Error('Evidence file must be a regular file, not a symbolic link');
+  if (before.isSymbolicLink() || !before.isFile()) throw new Error('资料文件必须是普通文件，不能是快捷方式或链接。');
   const canonical = await realpath(candidate);
-  if (dirname(canonical) !== root) throw new Error('Evidence file resolves outside the configured staging directory');
+  if (dirname(canonical) !== root) throw new Error('资料文件实际指向了投递目录之外的路径，已拒绝读取。');
 
   const flags = constants.O_RDONLY | (constants.O_NOFOLLOW || 0);
   const handle = await open(canonical, flags);
@@ -50,10 +51,10 @@ async function openStagedEvidence(evidenceDirectory, filename) {
     const opened = await handle.stat();
     const after = await lstat(candidate);
     if (!opened.isFile() || after.isSymbolicLink() || !after.isFile()) {
-      throw new Error('Evidence file changed while it was being opened');
+      throw new Error('资料文件在打开过程中发生了变化，已停止读取。');
     }
     if (opened.size !== after.size || opened.mtimeMs !== after.mtimeMs) {
-      throw new Error('Evidence file changed while it was being opened');
+      throw new Error('资料文件在打开过程中发生了变化，已停止读取。');
     }
     return { handle, size: opened.size };
   } catch (error) {
@@ -107,7 +108,7 @@ function deterministicUploadKey(projectId, contentDigest) {
 
 export async function listStagedEvidenceFiles(evidenceDirectory) {
   if (typeof evidenceDirectory !== 'string' || evidenceDirectory.trim() === '') {
-    return { ok: false, error: 'GEO_EVIDENCE_DIRECTORY is not configured', files: [] };
+    return { ok: false, error: '还没有配置资料投递目录（GEO_EVIDENCE_DIRECTORY）。', files: [] };
   }
   try {
     const root = await realpath(evidenceDirectory);
@@ -123,31 +124,30 @@ export async function listStagedEvidenceFiles(evidenceDirectory) {
     files.sort((left, right) => left.fileName.localeCompare(right.fileName));
     return { ok: true, files, count: files.length };
   } catch {
-    return { ok: false, error: 'The configured GEO staging directory is unavailable', files: [] };
+    return { ok: false, error: '配置的资料投递目录当前读不到，请检查路径是否存在、是否有读取权限。', files: [] };
   }
 }
 
 export function resolveApiOrigin(baseUrl) {
-  if (typeof baseUrl !== 'string' || baseUrl.trim() === '') throw new Error('GEO_API_BASE_URL is not configured');
+  if (typeof baseUrl !== 'string' || baseUrl.trim() === '') throw new Error('还没有配置 GEO 服务地址（GEO_API_BASE_URL）。');
   const url = new URL(baseUrl);
   if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password || url.search || url.hash || url.pathname !== '/') {
-    throw new Error('GEO_API_BASE_URL must be an http(s) origin without credentials, path, query, or fragment');
+    throw new Error('GEO 服务地址只能填协议、主机和端口，不要带用户名、路径、查询参数或片段。');
   }
   return url.origin;
 }
 
 /**
- * Normalize the optional gateway prefix. Only a plain absolute path is accepted so a
- * configured value can never turn into a different origin, an authority override, or a
- * protocol-relative hop that would leak the bearer to another host.
+ * 归一化可选的转发路径前缀。只接受一段普通的绝对路径，这样配置值永远不会变成
+ * 另一个主机、不会覆盖授权信息、也不会变成协议相对的跳转而把令牌泄露到别处。
  */
 export function normalizeBasePath(basePath) {
   if (typeof basePath !== 'string') return '';
   const trimmed = basePath.trim();
   if (trimmed === '' || trimmed === '/') return '';
-  if (!trimmed.startsWith('/')) throw new Error('GEO_API_BASE_PATH must be an absolute path such as /prod-api');
+  if (!trimmed.startsWith('/')) throw new Error('转发路径前缀要以 / 开头，例如 /prod-api。');
   if (trimmed.includes('//') || trimmed.includes('\\') || trimmed.includes('?') || trimmed.includes('#')) {
-    throw new Error('GEO_API_BASE_PATH must be a single path prefix without query, fragment, or backslash');
+    throw new Error('转发路径前缀只能是一段路径，不要带查询参数、片段或反斜杠。');
   }
   return trimmed.replace(/\/+$/, '');
 }
@@ -161,12 +161,12 @@ function encodeQueryValue(value) {
 function buildUrl(operation, args, origin, serverPath, basePath = '') {
   const pathParams = args.pathParams ?? {};
   let route = operation.path.replace(/\{([^}]+)\}/g, (_whole, name) => {
-    if (!Object.hasOwn(pathParams, name)) throw new Error(`pathParams.${name} is required`);
+    if (!Object.hasOwn(pathParams, name)) throw new Error(`pathParams.${name}：是必填项，请补上`);
     return encodeURIComponent(String(pathParams[name]));
   });
-  if (/[{}]/.test(route)) throw new Error('Path parameters were not fully resolved');
-  // basePath + serverPath, both optional halves. `new URL(route, origin)` keeps any
-  // leading slash in the path, so the prefix survives instead of being dropped.
+  if (/[{}]/.test(route)) throw new Error('地址里的占位参数没有全部替换掉，无法发出请求。');
+  // 前缀与接口路径这两半都是可选的。`new URL(route, origin)` 会保留路径开头的斜杠，
+  // 所以前缀不会被吞掉。
   route = `${basePath}${serverPath.replace(/\/$/, '')}${route}`;
   const url = new URL(route, `${origin}/`);
   const definitions = new Map(operation.parameters.filter(param => param.in === 'query').map(param => [param.name, param]));
@@ -193,7 +193,7 @@ function bounded(value, state = { truncated: false }, depth = 0) {
   if (!isPlainObject(value)) return value;
   if (depth >= 12) {
     state.truncated = true;
-    return '[depth limit]';
+    return '[层级过深，已省略]';
   }
   const entries = Object.entries(value).slice(0, 120).map(([key, item]) => [key, bounded(item, state, depth + 1)]);
   if (entries.length !== Object.keys(value).length) state.truncated = true;
@@ -206,7 +206,7 @@ function redact(value) {
   return Object.fromEntries(Object.entries(value).map(([key, child]) => [
     key,
     /^(?:accessToken|refreshToken|apiKey|token|authorization|password|secret|cookie)$/i.test(key)
-      ? '[redacted]'
+      ? '[已隐去]'
       : redact(child),
   ]));
 }
@@ -228,7 +228,7 @@ async function readJsonLimited(response) {
     size += value.byteLength;
     if (size > maxBodyBytes) {
       await reader.cancel();
-      throw new Error('GEO response exceeded the 2 MiB safety limit; narrow the query and retry only after checking whether the read completed');
+      throw new Error('GEO 返回的内容超过 2 MiB 安全上限，已停止读取；先确认这次读取是否已经完成，再缩小范围重试。');
     }
     chunks.push(value);
   }
@@ -241,10 +241,9 @@ function requestTimeoutSignal(signal, timeoutMs) {
 }
 
 /**
- * The DSH MCP bridge delivers `type: json` tool parameters as JSON-encoded
- * strings, while in-process callers (tests, embedded agents) pass native
- * objects. Accept both shapes so the strict contract validator always sees a
- * parsed JSON value; malformed JSON text is rejected before any dispatch.
+ * DSH 的桥接层会把类型为 json 的工具参数以 JSON 字符串形式送进来，而进程内调用方
+ * （测试、内嵌智能体）直接传对象。两种形状都接受，保证严格的契约校验看到的始终
+ * 是解析后的值；格式不对的 JSON 文本在派发之前就被拒绝。
  */
 function coerceJsonArgs(args) {
   const out = { ...args };
@@ -254,7 +253,7 @@ function coerceJsonArgs(args) {
     try {
       out[key] = JSON.parse(value);
     } catch {
-      return { error: `${key}: is not valid JSON text` };
+      return { error: `${key}：不是合法的 JSON 文本` };
     }
   }
   return { value: out };
@@ -262,26 +261,26 @@ function coerceJsonArgs(args) {
 
 export async function executeGeoOperation({ catalog, operationName, args, baseUrl, basePath = '', token, signal, fetchImpl = fetch, timeoutMs = 30_000 }) {
   const operation = catalog.operations[operationName];
-  if (!operation) return { ok: false, outcome: 'rejected', error: `Operation '${operationName}' is not in the generated OpenAPI allowlist` };
+  if (!operation) return { ok: false, outcome: 'rejected', error: `操作名 ${operationName} 不在本插件已开放的操作清单里。` };
   if (operation.requestBody?.contentType && operation.requestBody.contentType !== 'application/json') {
-    return { ok: false, outcome: 'rejected', error: 'This operation requires a dedicated constrained tool; use geo_upload_evidence for GEO evidence uploads.' };
+    return { ok: false, outcome: 'rejected', error: '这个操作要用它专用的受限工具；上传 GEO 资料请用 geo_upload_evidence。' };
   }
-  if (!isPlainObject(args)) return { ok: false, outcome: 'rejected', error: 'Tool arguments must be an object' };
+  if (!isPlainObject(args)) return { ok: false, outcome: 'rejected', error: '工具参数必须是一个对象。' };
   const jsonArgs = coerceJsonArgs(args);
   if (jsonArgs.error) {
-    return { ok: false, outcome: 'rejected', error: 'Request does not match the canonical GEO OpenAPI contract', validationErrors: [jsonArgs.error] };
+    return { ok: false, outcome: 'rejected', error: '请求不符合 GEO 接口契约，已被拦下', validationErrors: [jsonArgs.error] };
   }
   args = jsonArgs.value;
   const idemParam = operation.parameters.find(param => param.in === 'header' && param.name.toLowerCase() === 'x-idempotency-key');
   if (args.idempotencyKey !== undefined && !idemParam) {
-    return { ok: false, outcome: 'rejected', error: 'This operation has no X-Idempotency-Key parameter' };
+    return { ok: false, outcome: 'rejected', error: '这个操作没有 X-Idempotency-Key 参数，不需要传幂等键。' };
   }
   const idempotencyKey = idemParam ? (args.idempotencyKey || randomUUID()) : undefined;
   const idempotencyHeaders = idemParam ? { [idemParam.name]: idempotencyKey } : {};
   const normalizedArgs = { ...args, headers: idempotencyHeaders };
   const validationErrors = validateOperationArgs(operation, normalizedArgs, catalog);
-  if (validationErrors.length) return { ok: false, outcome: 'rejected', error: 'Request does not match the canonical GEO OpenAPI contract', validationErrors };
-  if (typeof token !== 'string' || token.trim() === '') return { ok: false, outcome: 'rejected', error: 'GEO project API token is not configured for this project.' };
+  if (validationErrors.length) return { ok: false, outcome: 'rejected', error: '请求不符合 GEO 接口契约，已被拦下', validationErrors };
+  if (typeof token !== 'string' || token.trim() === '') return { ok: false, outcome: 'rejected', error: '这个项目还没有配置访问令牌。' };
 
   let origin;
   try { origin = resolveApiOrigin(baseUrl); }
@@ -300,7 +299,7 @@ export async function executeGeoOperation({ catalog, operationName, args, baseUr
   const request = { method: operation.method, headers, redirect: 'manual', signal: requestTimeoutSignal(signal, timeoutMs) };
   if (normalizedArgs.body !== undefined) {
     const body = JSON.stringify(normalizedArgs.body);
-    if (Buffer.byteLength(body, 'utf8') > maxBodyBytes) return { ok: false, outcome: 'rejected', error: 'Request body exceeded the 2 MiB safety limit' };
+    if (Buffer.byteLength(body, 'utf8') > maxBodyBytes) return { ok: false, outcome: 'rejected', error: '请求内容超过 2 MiB 安全上限，已拒绝发出。' };
     headers.set('Content-Type', 'application/json');
     request.body = body;
   }
@@ -316,13 +315,13 @@ export async function executeGeoOperation({ catalog, operationName, args, baseUr
       operation: operation.name,
       method: operation.method,
       idempotencyKey,
-      error: 'GEO did not return a response. The request may already have been accepted; inspect the corresponding GEO record before attempting any repeat.',
+      error: 'GEO 没有返回任何响应，这次请求可能已经被受理。请先查对应的 GEO 记录，确认结果之后再考虑是否重试。',
     };
   }
 
   const contentType = response.headers.get('content-type') || 'unknown';
   if (response.status >= 300 && response.status < 400) {
-    return { ok: false, outcome: 'rejected', operation: operation.name, status: response.status, idempotencyKey, error: 'GEO returned a redirect. It was not followed to avoid forwarding credentials to another origin.' };
+    return { ok: false, outcome: 'rejected', operation: operation.name, status: response.status, idempotencyKey, error: 'GEO 返回了跳转。为免把凭据带到别的地址，插件没有跟随跳转。' };
   }
 
   if (operation.method !== 'GET' && response.status >= 500) {
@@ -333,7 +332,7 @@ export async function executeGeoOperation({ catalog, operationName, args, baseUr
       method: operation.method,
       status: response.status,
       idempotencyKey,
-      error: 'GEO returned an HTTP server error after the write request. Reconcile the corresponding GEO record before repeating, using the original idempotency key when the operation defines one; the plugin will not retry automatically.',
+      error: '写入请求发出后，GEO 返回了服务端错误。请先核对对应的 GEO 记录；如果这个操作定义了幂等键，就用原来那个键恢复。插件不会自动重试。',
     };
   }
 
@@ -353,14 +352,14 @@ export async function executeGeoOperation({ catalog, operationName, args, baseUr
       contentBytes: Buffer.byteLength(text, 'utf8'),
       bodyOmitted: true,
       idempotencyKey,
-      note: 'HTML and binary response bodies are omitted; open the corresponding GEO page to inspect them.',
+      note: '返回的是网页或二进制内容，正文已省略；请到对应的 GEO 页面查看。',
     };
   }
 
   let envelope;
   try { envelope = JSON.parse(text); }
   catch {
-    return { ok: false, outcome: response.ok ? 'unknown' : 'rejected', operation: operation.name, status: response.status, idempotencyKey, error: 'GEO returned an invalid JSON response; inspect the GEO record before repeating a write.' };
+    return { ok: false, outcome: response.ok ? 'unknown' : 'rejected', operation: operation.name, status: response.status, idempotencyKey, error: 'GEO 返回的内容不是合法 JSON。重复写入之前，请先查对应的 GEO 记录。' };
   }
 
   const successCode = envelope?.code === undefined || envelope.code === 200;
@@ -379,7 +378,7 @@ export async function executeGeoOperation({ catalog, operationName, args, baseUr
   };
   if (boundedState.truncated) {
     result.truncated = true;
-    result.note = 'Large GEO response was reduced for the conversation. Use pagination or a narrower filter to inspect remaining records.';
+    result.note = '返回内容过大，已做截断以适配对话；要看剩余记录请用分页或更精确的筛选条件。';
   }
   if (JSON.stringify(result).length > maxResultChars) {
     result = {
@@ -391,7 +390,7 @@ export async function executeGeoOperation({ catalog, operationName, args, baseUr
       bizCode: envelope?.bizCode,
       idempotencyKey,
       dataOmitted: true,
-      note: 'GEO response remained too large after bounded projection. Use pagination or a narrower filter.',
+      note: '截断之后返回内容仍然过大，本次数据已整体省略；请用分页或更精确的筛选条件重新查询。',
     };
   }
   return result;
@@ -401,31 +400,31 @@ export async function executeGeoEvidenceUpload({ catalog, args, evidenceDirector
   const operation = catalog.operations.post_evidence_sources_upload;
   if (!operation || operation.method !== 'POST' || operation.path !== '/evidence-sources/upload'
       || operation.requestBody?.contentType !== 'multipart/form-data') {
-    return { ok: false, outcome: 'rejected', error: 'The generated GEO catalog does not contain the expected evidence upload contract' };
+    return { ok: false, outcome: 'rejected', error: '生成的操作清单里没有找到资料上传接口，无法上传。' };
   }
-  if (!isPlainObject(args)) return { ok: false, outcome: 'rejected', error: 'Tool arguments must be an object' };
+  if (!isPlainObject(args)) return { ok: false, outcome: 'rejected', error: '工具参数必须是一个对象。' };
   const allowedArgs = new Set(['projectId', 'fileName', 'name', 'idempotencyKey']);
   const unknown = Object.keys(args).filter(key => !allowedArgs.has(key));
-  if (unknown.length) return { ok: false, outcome: 'rejected', error: `Unsupported upload argument(s): ${unknown.join(', ')}` };
+  if (unknown.length) return { ok: false, outcome: 'rejected', error: `上传工具不认识的参数：${unknown.join('、')}` };
   const projectId = String(args.projectId ?? '');
-  if (!/^[1-9]\d*$/.test(projectId)) return { ok: false, outcome: 'rejected', error: 'projectId must be a positive GEO project identifier' };
+  if (!/^[1-9]\d*$/.test(projectId)) return { ok: false, outcome: 'rejected', error: '项目编号必须是有效的 GEO 项目编号：正整数' };
   if (args.name !== undefined && (typeof args.name !== 'string' || args.name.length < 1 || args.name.length > 300 || /[\u0000-\u001f\u007f]/.test(args.name))) {
-    return { ok: false, outcome: 'rejected', error: 'name must be a non-empty string of at most 300 characters without control characters' };
+    return { ok: false, outcome: 'rejected', error: '资料名称必须是 1 到 300 个字符的文本，且不能包含控制字符。' };
   }
 
   const uploadBody = { projectId, file: args.fileName, ...(args.name === undefined ? {} : { name: args.name }) };
   const validationErrors = validateValue(uploadBody, operation.requestBody.schema, 'body', catalog.schemas);
-  if (validationErrors.length) return { ok: false, outcome: 'rejected', error: 'Upload fields do not match the canonical GEO OpenAPI contract', validationErrors };
+  if (validationErrors.length) return { ok: false, outcome: 'rejected', error: '上传字段不符合 GEO 接口契约，已被拦下', validationErrors };
   const idemParam = operation.parameters.find(param => param.in === 'header' && param.name.toLowerCase() === 'x-idempotency-key');
-  if (!idemParam) return { ok: false, outcome: 'rejected', error: 'The generated upload contract is missing X-Idempotency-Key' };
+  if (!idemParam) return { ok: false, outcome: 'rejected', error: '生成的上传接口定义里缺少 X-Idempotency-Key，无法安全上传。' };
   if (args.idempotencyKey !== undefined) {
     if (typeof args.idempotencyKey !== 'string' || args.idempotencyKey.length < 1 || args.idempotencyKey.length > 200) {
-      return { ok: false, outcome: 'rejected', error: 'idempotencyKey must be a non-empty string of at most 200 characters' };
+      return { ok: false, outcome: 'rejected', error: '幂等键必须是 1 到 200 个字符的文本。' };
     }
     const keyErrors = validateValue(args.idempotencyKey, idemParam.schema, 'headers.X-Idempotency-Key', catalog.schemas);
-    if (keyErrors.length) return { ok: false, outcome: 'rejected', error: 'idempotencyKey does not match the canonical GEO OpenAPI contract', validationErrors: keyErrors };
+    if (keyErrors.length) return { ok: false, outcome: 'rejected', error: '幂等键不符合 GEO 接口契约', validationErrors: keyErrors };
   }
-  if (typeof token !== 'string' || token.trim() === '') return { ok: false, outcome: 'rejected', error: 'GEO project API token is not configured for this project.' };
+  if (typeof token !== 'string' || token.trim() === '') return { ok: false, outcome: 'rejected', error: '这个项目还没有配置访问令牌。' };
 
   let origin;
   try { origin = resolveApiOrigin(baseUrl); }
@@ -442,13 +441,13 @@ export async function executeGeoEvidenceUpload({ catalog, args, evidenceDirector
   try { contentDigest = await hashStagedFile(opened.handle); }
   catch {
     await opened.handle.close().catch(() => {});
-    return { ok: false, outcome: 'rejected', error: 'The staged evidence file could not be read; no GEO request was sent.' };
+    return { ok: false, outcome: 'rejected', error: '读不了投递目录里的资料文件，没有向 GEO 发出任何请求。' };
   }
   const idempotencyKey = args.idempotencyKey || deterministicUploadKey(projectId, contentDigest);
   const keyErrors = validateValue(idempotencyKey, idemParam.schema, 'headers.X-Idempotency-Key', catalog.schemas);
   if (keyErrors.length) {
     await opened.handle.close().catch(() => {});
-    return { ok: false, outcome: 'rejected', error: 'The generated idempotency key does not match the canonical GEO OpenAPI contract', validationErrors: keyErrors };
+    return { ok: false, outcome: 'rejected', error: '自动生成的幂等键不符合 GEO 接口契约', validationErrors: keyErrors };
   }
 
   const boundary = `----geo-${randomUUID().replaceAll('-', '')}`;
@@ -482,17 +481,17 @@ export async function executeGeoEvidenceUpload({ catalog, args, evidenceDirector
       fileName: args.fileName,
       projectId,
       idempotencyKey,
-      error: 'GEO did not return a response. The upload may already have been accepted; inspect this project’s evidence list before attempting any repeat, and reuse the same idempotency key if recovery allows it.',
+      error: 'GEO 没有返回任何响应，这次上传可能已经被受理。请先查这个项目的资料列表；如果规则允许恢复，就用同一个幂等键重试。',
     };
   }
   await opened.handle.close().catch(() => {});
 
   const contentType = response.headers.get('content-type') || 'unknown';
   if (response.status >= 300 && response.status < 400) {
-    return { ok: false, outcome: 'rejected', operation: operation.name, status: response.status, fileName: args.fileName, projectId, idempotencyKey, error: 'GEO returned a redirect. It was not followed to avoid forwarding credentials to another origin.' };
+    return { ok: false, outcome: 'rejected', operation: operation.name, status: response.status, fileName: args.fileName, projectId, idempotencyKey, error: 'GEO 返回了跳转。为免把凭据带到别的地址，插件没有跟随跳转。' };
   }
   if (response.status >= 500) {
-    return { ok: false, outcome: 'unknown', operation: operation.name, status: response.status, fileName: args.fileName, projectId, idempotencyKey, error: 'GEO returned a server error after the upload request. Inspect the project evidence list before any recovery; do not submit a new upload.' };
+    return { ok: false, outcome: 'unknown', operation: operation.name, status: response.status, fileName: args.fileName, projectId, idempotencyKey, error: '上传请求发出后，GEO 返回了服务端错误。请先查该项目的资料列表再决定；不要直接再提交一次上传。' };
   }
 
   let text;
@@ -501,12 +500,12 @@ export async function executeGeoEvidenceUpload({ catalog, args, evidenceDirector
     return { ok: false, outcome: response.ok ? 'unknown' : 'rejected', operation: operation.name, status: response.status, fileName: args.fileName, projectId, idempotencyKey, error: error.message };
   }
   if (!contentType.toLowerCase().includes('json')) {
-    return { ok: false, outcome: response.ok ? 'unknown' : 'rejected', operation: operation.name, status: response.status, fileName: args.fileName, projectId, idempotencyKey, error: 'GEO did not return the expected JSON evidence record. Inspect the project evidence list before any recovery.' };
+    return { ok: false, outcome: response.ok ? 'unknown' : 'rejected', operation: operation.name, status: response.status, fileName: args.fileName, projectId, idempotencyKey, error: 'GEO 没有返回预期的资料记录。请先查该项目的资料列表再决定如何处理。' };
   }
   let envelope;
   try { envelope = JSON.parse(text); }
   catch {
-    return { ok: false, outcome: response.ok ? 'unknown' : 'rejected', operation: operation.name, status: response.status, fileName: args.fileName, projectId, idempotencyKey, error: 'GEO returned invalid JSON; inspect the project evidence list before repeating the upload.' };
+    return { ok: false, outcome: response.ok ? 'unknown' : 'rejected', operation: operation.name, status: response.status, fileName: args.fileName, projectId, idempotencyKey, error: 'GEO 返回的内容不是合法 JSON。重复上传之前，请先查该项目的资料列表。' };
   }
   const ok = response.ok && (envelope?.code === undefined || envelope.code === 200);
   const data = redact(envelope?.data ?? envelope);
@@ -535,7 +534,7 @@ export async function executeGeoEvidenceUpload({ catalog, args, evidenceDirector
       projectId,
       idempotencyKey,
       dataOmitted: true,
-      note: 'GEO response was reduced; use the evidence list to inspect the created record.',
+      note: '返回内容过大已省略；请到资料列表里查看刚创建的记录。',
     };
   }
   return result;
@@ -554,7 +553,7 @@ export function describeOperation(operation, schemas) {
     category: operation.tag,
     summary: operation.summary,
     permission: operation.permission,
-    approval: operation.method === 'GET' ? 'none; read only' : 'required; DSH asks the operator before dispatch',
+    approval: operation.method === 'GET' ? '不需要审批，只读操作' : '需要审批：派发之前 DSH 会请操作员确认',
     pathParameters: operation.parameters.filter(param => param.in === 'path').map(param => ({ name: param.name, required: param.required, schema: param.schema, description: param.description })),
     queryParameters: operation.parameters.filter(param => param.in === 'query').map(param => ({ name: param.name, required: param.required, schema: param.schema, description: param.description })),
     headers: operation.parameters.filter(param => param.in === 'header').map(param => ({
@@ -571,7 +570,7 @@ export function describeOperation(operation, schemas) {
       schema: operation.requestBody.schema,
     } : null,
     idempotencyRule: operation.idempotencyRule,
-    response: operation.hasJsonResponse ? 'GEO JSON envelope' : 'non-JSON response is summarized; body omitted',
+    response: operation.hasJsonResponse ? 'GEO 标准返回结构（JSON）' : '非 JSON 返回，只做摘要，正文省略',
     schemas,
   };
 }
