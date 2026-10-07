@@ -21,7 +21,7 @@
 
 ## AI 的执行步骤（人工指定媒体后）
 
-1. **搜索定位**：`get_media_catalog_resources`（支持 `keyword` 按名称匹配，另有地区/行业/价格等筛选）或 `get_media_favorites`（`projectId` 必填 + `keyword`；项目收藏优先）；
+1. **搜索定位**：`get_media_catalog_resources`（`keyword` 按名称匹配；`resourceType` 枚举 media/self_media/overseas_media/short_video；另有地区/行业/价格/收稿时长筛选）或 `get_media_favorites`（`projectId` 必填 + `keyword`；项目收藏优先）；
    - 命中唯一 → 取 `providerResourceId` 与 `resourceType` 继续；
    - 命中多条或零条 → 把**搜索结果原样列给人工挑**（这是展示搜索结果，不是 AI 推荐）；仍定不下来就请人工到网页端媒体中心确认名称；
 2. **预览出报价**：`preview-from-resource` → 展示媒体、金额、预算状态（充足/接近上限/不足）、收稿时效；
@@ -42,6 +42,17 @@
 - **报价确认**（必须，单独一问：金额 + 媒体 + 稿件标题）；
 - **媒体名对不上**（零命中或多条歧义）：列出搜索结果供人工挑选，不替人判断；
 - **预算缺口**：报价超过余量时告知缺口金额，等人工决定加预算或换媒体。
+
+## 已知撞墙与替代（2026-10-07 全量实测）
+
+| 端点 | 现象 | 处置 |
+|---|---|---|
+| `GET /publish-targets` | No endpoint（controller 已在 codex 实现，待部署） | 不调用；直接媒体目录搜索 |
+| `POST /publish-records/preview` | No endpoint | 用 `preview-from-resource` 替代（UI 同款） |
+| `POST /publish-records/manual` | No endpoint | 人工登记暂不可用，如实告知运营员 |
+| `GET /customer-geo-reports/{id}` 与 `/html` | 502 快照读取失败（特定报告复现两次，疑似 OSS 数据问题） | 重试一次，仍失败即报告并跳过该报告 |
+
+参数口径提醒：`publish-resources` 的 `resourceType` 必须用枚举值（media/self_media/overseas_media/short_video）；`detect-records/statistics` 需要 `from`/`to`/`granularity`。
 
 ## 红线
 
