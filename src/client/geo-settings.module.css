@@ -1,5 +1,8 @@
+/* 不要再加 overflow: hidden —— 它会把超出视口的设置卡内容直接裁掉：
+   既不产生滚动条，也不透传给主视图页的 .page 滚动容器，表现为「卡片下半截
+   滑不出来」。圆角不需要它（子元素自带 padding，本来就贴不到圆角外）。
+   纵向溢出交给 .page { overflow-y: auto }。 */
 .card {
-  overflow: hidden;
   color: var(--dsw-alias-label-primary, #1f2329);
   background: var(--dsw-alias-bg-layer-3, #fff);
   border: 1px solid var(--dsw-alias-border-l2, #d0d7de);

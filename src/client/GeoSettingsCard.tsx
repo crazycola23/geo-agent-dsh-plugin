@@ -88,8 +88,8 @@ function draftsFrom(projects: ProjectSettings[] | undefined): ProjectDraft[] {
 // 只有显式 'agent' 才是自动档，其余任何值都按「询问」处理。
 const POLICY_DOMAINS: Array<{ key: PolicyKey; name: string; scope: string }> = [
   { key: 'factConfirmPolicy', name: '事实确认', scope: '事实修订与提取候选的确认、停用、存疑' },
-  { key: 'contentPrepPolicy', name: '内容准备', scope: '问题、查询面板、内容要素、事实提取发起' },
-  { key: 'contentGenerationPolicy', name: '内容生成', scope: '生成任务与文章卡片，会消耗 LLM 费用' },
+  { key: 'contentPrepPolicy', name: '内容准备', scope: '问题、问题面板、内容要素、事实提取发起' },
+  { key: 'contentGenerationPolicy', name: '内容生成', scope: '生成任务与文章卡片，会产生模型调用费用' },
   { key: 'detectionPolicy', name: '检测', scope: '检测计划、运行与重试；预算仍由服务端硬校验' },
   { key: 'reportPolicy', name: '报告', scope: '报告生成、确认、渲染与按规则恢复' },
 ]
@@ -473,8 +473,8 @@ export function GeoSettingsCard(props: GeoSettingsCardProps): ReactNode {
             />
             <div className={styles.twoColumns}>
               <Field
-                label="网关路径前缀"
-                hint="留空表示直连"
+                label="转发路径前缀"
+                hint="经网关转发时填写；直连留空"
                 value={apiBasePath}
                 placeholder="/prod-api"
                 testId="geo-api-base-path"
@@ -503,7 +503,7 @@ export function GeoSettingsCard(props: GeoSettingsCardProps): ReactNode {
             </div>
 
             {projects.length === 0 ? (
-              <div className={styles.emptyProjects}>添加项目 ID 与该项目的 API 令牌。</div>
+              <div className={styles.emptyProjects}>添加项目编号与该项目的访问令牌。</div>
             ) : projects.map((project, index) => {
               const projectId = project.projectId.trim()
               const refs = validProjectId(projectId) ? projectCredentialRefs(projectId) : undefined
@@ -517,13 +517,13 @@ export function GeoSettingsCard(props: GeoSettingsCardProps): ReactNode {
                       <strong className={styles.projectTitle}>{project.name.trim() || (projectId ? `项目 ${projectId}` : '新项目授权')}</strong>
                     </div>
                     <div className={styles.credentialStates}>
-                      <CredentialState label="项目 API 令牌" info={tokenInfo} />
+                      <CredentialState label="项目访问令牌" info={tokenInfo} />
                     </div>
                   </div>
                   <div className={styles.twoColumns}>
                     <Field
-                      label="项目 ID"
-                      hint="调用工具时使用同一个项目 ID。"
+                      label="项目编号"
+                      hint="调用工具时使用同一个项目编号。"
                       value={project.projectId}
                       placeholder="例如 2100100790457094145"
                       testId={`geo-project-id-${index}`}
@@ -540,11 +540,11 @@ export function GeoSettingsCard(props: GeoSettingsCardProps): ReactNode {
                     />
                   </div>
                   <Field
-                    label="该项目 API 令牌"
-                    hint="写入后不再回显；轮换时在 GEO 撤销旧令牌后粘贴新令牌。"
+                    label="该项目访问令牌"
+                    hint="写入后不再回显；轮换时先在 GEO 撤销旧令牌，再粘贴新令牌。"
                     value={project.apiToken}
                     type="password"
-                    placeholder={tokenInfo?.configured ? '已安全保存；留空表示不更改' : '粘贴该项目的 geop_ 令牌'}
+                    placeholder={tokenInfo?.configured ? '已安全保存；留空表示不更改' : '粘贴该项目的访问令牌'}
                     testId={`geo-project-api-token-${index}`}
                     autoComplete="new-password"
                     disabled={busy || tokenInfo?.writable === false}
@@ -552,7 +552,7 @@ export function GeoSettingsCard(props: GeoSettingsCardProps): ReactNode {
                   />
                   {confirmRemoveKey === project.draftKey ? (
                     <div className={styles.confirmRow}>
-                      <span>移除该项目后，保存时会清理可写的 DSH 凭据。继续吗？</span>
+                      <span>移除该项目后，保存时会一并清理已保存的访问令牌。继续吗？</span>
                       <button className={styles.dangerButton} type="button" disabled={busy} onClick={() => confirmRemoveProject(project)}>确认移除</button>
                       <button className={styles.ghostButton} type="button" disabled={busy} onClick={() => setConfirmRemoveKey(undefined)}>取消</button>
                     </div>
@@ -639,7 +639,7 @@ export function GeoSettingsCard(props: GeoSettingsCardProps): ReactNode {
                 </div>
               )
             })}
-            <p className={styles.hint}>「自动」授权 Agent 按判断直接执行该域写入；发布确认类操作始终需要人工审批。</p>
+            <p className={styles.hint}>「自动」授权智能体按判断直接执行该域写入；发布确认类操作始终需要人工审批。</p>
             {policyError ? <p className={styles.inlineError}>{policyError}</p> : null}
           </div>
             </>

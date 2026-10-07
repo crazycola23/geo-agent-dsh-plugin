@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
-import Schema from '@deepseek-ai/schemastery';
+import * as z from 'zod';
 import { defineTool } from '@deepseek-ai/dsh-tools';
 import { createGeoAuthProvider, executeWithGeoProjectToken } from './auth-provider.js';
 import { executeGeoOperation, executeGeoEvidenceUpload, listStagedEvidenceFiles, describeOperation, isWriteOperation } from './api-client.js';
@@ -204,14 +204,21 @@ function jsonOutput(presentationMeta) {
 
 /** 结果语义投影的公共形状：outcome 是 GEO 自己的三态，不做推断。 */
 function geoResultMeta(kind, readOperation, readProjectId) {
-  return (args, value) => ({
-    kind,
-    operation: readOperation(args),
-    projectId: readProjectId(args),
-    outcome: typeof value?.outcome === 'string' ? value.outcome : 'unknown',
-    ok: value?.ok === true,
-    httpStatus: typeof value?.status === 'number' ? value.status : null,
-  });
+  return (args, value) => {
+    const outcome = typeof value?.outcome === 'string' ? value.outcome : 'unknown';
+    // 失败原因取服务端给的人读理由，不让界面退化成一句「被拒」。
+    const reason = value?.error ?? value?.msg ?? (typeof value?.details === 'string' ? value.details : '');
+    return {
+      kind,
+      operation: readOperation(args),
+      projectId: readProjectId(args),
+      outcome,
+      ok: value?.ok === true,
+      httpStatus: typeof value?.status === 'number' ? value.status : null,
+      bizCode: typeof value?.bizCode === 'string' && value.bizCode !== '' ? value.bizCode : null,
+      rejectionReason: outcome === 'rejected' && typeof reason === 'string' ? reason.slice(0, 200) : '',
+    };
+  };
 }
 
 /** Deep-copy a JSON-shaped value, omitting own keys whose value is `undefined`. */
@@ -374,30 +381,42 @@ export function apply(ctx, config = {}) {
   // 会话投影：把 GEO 工具调用折成业务阶段进度，工作台页据此画流程条。
   // inject 是软依赖：宿主（或测试桩）没有该方法、缺 sessionProjections
   // 服务时只是不注册投影，工具与设置卡不受影响。
+  //
+  // ⚠ stateSchema / viewSchema 必须是 **zod**，不能用 schemastery：注册表直接调
+  // `definition.stateSchema.parse(...)` 与 `wire.viewSchema.parse(...)`
+  // （dsh-session-projection/lib/index.js:255/259/297/305/422/433），而
+  // schemastery 3.18 的 Schema 没有 parse 方法。传 schemastery 会让注册在运行时
+  // 抛 TypeError，`geoWorkflow` 这个 key 从未真正注册 —— 前端读不到 store，进度页
+  // 恒为空态，而且不产生任何可见报错。类型定义（ProjectionDefinition.stateSchema:
+  // ZodType<S>）也是这么写的。
   if (typeof ctx.inject === 'function') {
     ctx.inject(['sessionProjections'], (projectionCtx) => {
     projectionCtx.sessionProjections.register({
       key: 'geoWorkflow',
-      stateSchema: Schema.object({
-        inheritedEventCount: Schema.number().int().min(0),
-        lastSeq: Schema.number().int().min(0),
-        projectIds: Schema.array(Schema.string()),
-        stages: Schema.dict(Schema.object({
-          calls: Schema.number().int().min(0),
-          reads: Schema.number().int().min(0),
-          writes: Schema.number().int().min(0),
-          lastOp: Schema.string(),
-          lastCallId: Schema.string(),
-          outcome: Schema.string(),
-        }).strict()),
-      }).strict(),
+      stateSchema: z.strictObject({
+        inheritedEventCount: z.number().int().min(0),
+        lastSeq: z.number().int().min(0),
+        projectIds: z.array(z.string()),
+        approvals: z.record(z.string(), z.string()),
+        stages: z.record(z.string(), z.strictObject({
+          calls: z.number().int().min(0),
+          reads: z.number().int().min(0),
+          writes: z.number().int().min(0),
+          lastOp: z.string(),
+          lastCallId: z.string(),
+          outcome: z.string(),
+          awaitingApproval: z.boolean(),
+          rejectionReason: z.string(),
+        })),
+      }),
       init: (_header, inheritedEventCount) => ({
         inheritedEventCount: Number(inheritedEventCount) || 0,
         lastSeq: 0,
         projectIds: [],
+        approvals: {},
         stages: {},
       }),
-      // 折叠语义已变（字符串实参 / 只读不推进 / 结果取自 meta），
+      // 折叠语义已变（字符串实参 / 只读不推进 / 结果取自 meta / 消费审批事件），
       // stateVersion 必须递增：否则旧的持久化检查点行会被 forward-apply
       // 成缺字段的垃圾状态（dsh-session-projection 契约）。
       apply: (state, event) => {
@@ -408,22 +427,24 @@ export function apply(ctx, config = {}) {
         });
       },
       wire: {
-        viewSchema: Schema.object({
-          stages: Schema.array(Schema.object({
-            key: Schema.string(),
-            label: Schema.string(),
-            status: Schema.string(),
-            calls: Schema.number(),
-            reads: Schema.number(),
-            writes: Schema.number(),
-            lastOp: Schema.string(),
-            outcome: Schema.string(),
-          }).strict()),
-          projects: Schema.array(Schema.string()),
-        }).strict(),
+        viewSchema: z.strictObject({
+          stages: z.array(z.strictObject({
+            key: z.string(),
+            label: z.string(),
+            status: z.string(),
+            calls: z.number(),
+            reads: z.number(),
+            writes: z.number(),
+            lastOp: z.string(),
+            outcome: z.string(),
+            awaitingApproval: z.boolean(),
+            rejectionReason: z.string(),
+          })),
+          projects: z.array(z.string()),
+        }),
         view: (state) => stageView(state),
       },
-      stateVersion: 2,
+      stateVersion: 3,
     });
   });
 }

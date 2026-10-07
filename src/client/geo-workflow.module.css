@@ -1,26 +1,263 @@
-/* 主视图宿主容器形态不确定：标准 flex 列时靠 flex:1+min-height:0 收缩滚动；
-   非 flex 容器时靠 max-height(视口兜底) 约束。两条路都保证 overflow-y 生效。
-   （官方 schedule 页 pageScroll 同款 flex 模式 + 视口兜底帽。） */
+/* 滚动结构照官方 TaskManagerPage 三层（dsh-client-ui-schedule）：
+   .page 锁高不滚（overflow:hidden + height:100% + min-height:0）→ .pageScroll 专滚
+   → .pageContent 只管居中与底部留白。高度全部由宿主 flex 链传递，
+   不需要 calc(100dvh - 120px) 这类硬编码头部高度的兜底 —— 那个数一变就偏，
+   偏大留空白、偏小提前裁断。 */
 .page {
   display: flex;
   flex-direction: column;
-  gap: 16px;
   width: 100%;
   max-width: 980px;
   margin: 0 auto;
-  flex: 1 1 auto;
-  min-height: 0;
   height: 100%;
-  max-height: calc(100dvh - 120px);
+  min-height: 0;
+  overflow: hidden;
+}
+
+.pageScroll {
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
+  overflow-x: hidden;
   scrollbar-gutter: stable;
+}
+
+.pageContent {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
   padding-bottom: 24px;
+}
+
+.wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+/* 汇总条：写操作与只读探测分列，避免「有调用」被误读成「有进展」。 */
+.totals {
+  display: flex;
+  gap: 16px;
+  font-size: 12px;
+  color: var(--dsw-alias-label-secondary, #4b5563);
+}
+
+.totalItem strong {
+  color: var(--dsw-alias-label-primary, #111827);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+/* 等审批是唯一需要主动打断运营员的状态，用琥珀色单独标出来。 */
+.totalAlert {
+  color: #b45309;
+}
+
+.totalAlert strong {
+  color: #b45309;
+}
+
+.cellAwaiting {
+  border-left-color: #d97706;
+  background: color-mix(in srgb, #d97706 7%, var(--dsw-alias-bg-layer-3, #fff));
+  animation: awaitingPulse 1.8s ease-in-out infinite;
+}
+
+.cellAwaiting .cellIndex {
+  background: #d97706;
+  color: #fff;
+  font-weight: 700;
+}
+
+.cellAwaiting .cellStatus {
+  color: #b45309;
+  font-weight: 600;
+}
+
+@keyframes awaitingPulse {
+  0%, 100% { border-color: var(--dsw-alias-border-secondary, #e5e7eb); }
+  50% { border-color: #d97706; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cellAwaiting { animation: none; }
+}
+
+.cellHint {
+  color: #b45309;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+/* 拒绝原因截断显示，完整内容留在 title 里。 */
+.cellReason {
+  display: block;
+  overflow: hidden;
+  color: #dc2626;
+  font-size: 11px;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 阶段网格：四列自适应，窄屏自动降列。 */
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.cell {
+  display: flex;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--dsw-alias-border-secondary, #e5e7eb);
+  border-left: 3px solid var(--dsw-alias-border-secondary, #e5e7eb);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-3, #fff);
+  min-width: 0;
+}
+
+.cellIndex {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--dsw-alias-bg-layer-2, #f3f4f6);
+  color: var(--dsw-alias-label-tertiary, #6b7280);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.cellBody {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.cellTop {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.cellName {
+  color: var(--dsw-alias-label-primary, #111827);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.cellStatus {
+  flex: none;
+  font-size: 11px;
+  color: var(--dsw-alias-label-tertiary, #6b7280);
+}
+
+.cellCounts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.countWrite {
+  color: #1f6feb;
+}
+
+.countRead {
+  color: var(--dsw-alias-label-tertiary, #6b7280);
+}
+
+.countNone {
+  color: var(--dsw-alias-label-tertiary, #9ca3af);
+}
+
+/* 最近一次动作的中文业务叫法；未收录映射时不渲染，不兜底成英文。 */
+.cellOp {
+  display: block;
+  overflow: hidden;
+  color: var(--dsw-alias-label-secondary, #4b5563);
+  font-size: 11px;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cellDone {
+  border-left-color: #1f6feb;
+}
+
+.cellDone .cellIndex {
+  background: #1f6feb;
+  color: #fff;
+}
+
+.cellDone .cellStatus {
+  color: #1f6feb;
+}
+
+.cellActive {
+  border-left-color: #1f6feb;
+  background: color-mix(in srgb, #1f6feb 6%, var(--dsw-alias-bg-layer-3, #fff));
+}
+
+.cellActive .cellIndex {
+  background: color-mix(in srgb, #1f6feb 16%, transparent);
+  color: #1f6feb;
+  font-weight: 600;
+}
+
+.cellActive .cellStatus {
+  color: #1f6feb;
+  font-weight: 600;
+}
+
+.cellFailed {
+  border-left-color: #dc2626;
+  background: color-mix(in srgb, #dc2626 5%, var(--dsw-alias-bg-layer-3, #fff));
+}
+
+.cellFailed .cellIndex {
+  background: #dc2626;
+  color: #fff;
+  font-weight: 700;
+}
+
+.cellFailed .cellStatus {
+  color: #dc2626;
+  font-weight: 600;
+}
+
+.cellUnknown {
+  border-left-color: #d97706;
+  background: color-mix(in srgb, #d97706 5%, var(--dsw-alias-bg-layer-3, #fff));
+}
+
+.cellUnknown .cellIndex {
+  background: color-mix(in srgb, #d97706 18%, transparent);
+  color: #b45309;
+  font-weight: 700;
+}
+
+.cellUnknown .cellStatus {
+  color: #b45309;
+  font-weight: 600;
 }
 
 .stepperCard {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
   padding: 14px 16px;
   border: 1px solid var(--dsw-alias-border-secondary, #e5e7eb);
   border-radius: 12px;
@@ -32,106 +269,13 @@
   font-weight: 600;
 }
 
-.track {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px 0;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.step {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 0 10px;
-  position: relative;
-}
-
-.step:not(:last-child)::after {
-  content: "";
-  position: absolute;
-  right: -6px;
-  top: 50%;
-  width: 12px;
-  height: 1px;
-  background: var(--dsw-alias-border-secondary, #e5e7eb);
-}
-
-.dot {
-  display: grid;
-  place-items: center;
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  font-size: 11px;
-  line-height: 1;
-}
-
-.stepLabel {
-  font-size: 12px;
-}
-
-.stepPending .dot {
-  border: 1px solid var(--dsw-alias-border-secondary, #e5e7eb);
-  color: var(--dsw-alias-label-tertiary, #6b7280);
-}
-
-.stepPending .stepLabel {
-  color: var(--dsw-alias-label-tertiary, #6b7280);
-}
-
-.stepActive .dot {
-  border: 1px solid var(--dsw-alias-state-business-primary, #4f8cff);
-  background: color-mix(in srgb, var(--dsw-alias-state-business-primary, #4f8cff) 14%, transparent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--dsw-alias-state-business-primary, #4f8cff) 12%, transparent);
-}
-
-.stepActive .stepLabel {
-  color: var(--dsw-alias-label-primary, #111827);
-  font-weight: 600;
-}
-
-.stepDone .dot {
-  border: 1px solid transparent;
-  background: var(--dsw-alias-state-business-primary, #4f8cff);
-  color: var(--dsw-alias-label-primary-foreground, #fff);
-}
-
-.stepDone .stepLabel {
-  color: var(--dsw-alias-label-secondary, #4b5563);
-}
-
-/* 被拒：与「进行中」明确区分，别让失败读成正在推进。 */
-.stepFailed .dot {
-  border: 1px solid transparent;
-  background: #dc2626;
-  color: var(--dsh-alias-label-primary-foreground, #fff);
-  font-weight: 700;
-}
-
-.stepFailed .stepLabel {
-  color: #dc2626;
-  font-weight: 600;
-}
-
-/* 待查证：结果未知，不得与完成混淆。 */
-.stepUnknown .dot {
-  border: 1px solid #d97706;
-  background: color-mix(in srgb, #d97706 16%, transparent);
-  color: #b45309;
-  font-weight: 700;
-}
-
-.stepUnknown .stepLabel {
-  color: #b45309;
-  font-weight: 600;
-}
-
 .caption[data-status="failed"] {
   color: #dc2626;
+}
+
+.caption[data-status="awaiting"] {
+  color: #b45309;
+  font-weight: 600;
 }
 
 .caption[data-status="unknown"] {

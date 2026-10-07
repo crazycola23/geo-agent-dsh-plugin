@@ -112,7 +112,7 @@ export function parseCallArguments(rawArguments) {
 
 /** 一个阶段的空状态。outcome 为 '' 表示「最近一次写的结果还没回来」。 */
 export function emptyStageState() {
-  return { calls: 0, reads: 0, writes: 0, lastOp: '', lastCallId: '', outcome: '' };
+  return { calls: 0, reads: 0, writes: 0, lastOp: '', lastCallId: '', outcome: '', awaitingApproval: false, rejectionReason: '' };
 }
 
 /** 收敛已知的三个结果码；其它一律按 unknown（未知不得当成成功）。 */
@@ -157,6 +157,9 @@ export function foldToolCall(state, { callId, operation, tag, seq, projectId, is
         lastCallId: typeof callId === 'string' ? callId : current.lastCallId,
         // 重新进入该阶段即视为未收敛，结果到达时再定终态。
         outcome: '',
+        // 新一轮调用开始，旧的拒绝原因与审批挂起不再适用。
+        awaitingApproval: false,
+        rejectionReason: '',
       },
     },
   };
@@ -166,7 +169,7 @@ export function foldToolCall(state, { callId, operation, tag, seq, projectId, is
  * 把一次 tool/result 事件折进阶段状态。只收敛该阶段最近一次**写**调用；
  * 只读调用不改 outcome，meta 缺席按 unknown 落定。
  */
-export function foldToolResult(state, { callId, outcome }) {
+export function foldToolResult(state, { callId, outcome, reason }) {
   if (typeof callId !== 'string' || callId === '') return state;
   const stageKey = Object.keys(state.stages).find(key => state.stages[key]?.lastCallId === callId);
   if (stageKey === undefined) return state;
@@ -175,7 +178,62 @@ export function foldToolResult(state, { callId, outcome }) {
   if (stage.outcome !== '') return state;
   return {
     ...state,
-    stages: { ...state.stages, [stageKey]: { ...stage, outcome: normalizeOutcome(outcome) } },
+    stages: {
+      ...state.stages,
+      [stageKey]: {
+        ...stage,
+        outcome: normalizeOutcome(outcome),
+        rejectionReason: normalizeOutcome(outcome) === 'rejected' && typeof reason === 'string' ? reason : '',
+      },
+    },
+  };
+}
+
+/** 找到持有该 callId 的阶段；审批事件按调用而非操作定位。 */
+function stageKeyOfCallId(state, callId) {
+  if (typeof callId !== 'string' || callId === '') return undefined;
+  return Object.keys(state.stages).find(key => state.stages[key]?.lastCallId === callId);
+}
+
+/**
+ * `approval/asked` → 该阶段标记为「等人工审批」。这是 OpsRun 里最需要的一格：
+ * 决策项批准后，运营员要知道哪一项正在等他批。
+ * 事件带 toolName + callId（dsh-user-approval 契约），callId 能与 GEO 的
+ * tool/call 精确配对；缺 callId 时不猜。
+ */
+export function foldApprovalAsked(state, { toolName, callId }) {
+  if (toolName !== 'geo_api' && toolName !== 'geo_upload_evidence') return state;
+  const stageKey = stageKeyOfCallId(state, callId);
+  if (stageKey === undefined) return state;
+  const stage = state.stages[stageKey];
+  if (stage.awaitingApproval) return state;
+  return {
+    ...state,
+    stages: { ...state.stages, [stageKey]: { ...stage, awaitingApproval: true } },
+  };
+}
+
+/**
+ * `approval/decided` → 审批已结束。被否或不可用时，该阶段同时落 failed：
+ * 人工拒绝了这次写入，这是一次确定的失败，不是未知。
+ */
+export function foldApprovalDecided(state, { callId, outcome }) {
+  if (typeof callId !== 'string' || callId === '') return state;
+  const stageKey = stageKeyOfCallId(state, callId);
+  if (stageKey === undefined) return state;
+  const stage = state.stages[stageKey];
+  const denied = outcome === 'rejected' || outcome === 'unavailable';
+  if (!stage.awaitingApproval && !denied) return state;
+  return {
+    ...state,
+    stages: {
+      ...state.stages,
+      [stageKey]: {
+        ...stage,
+        awaitingApproval: false,
+        ...(denied ? { outcome: 'rejected', rejectionReason: '人工审批未通过' } : {}),
+      },
+    },
   };
 }
 
@@ -198,16 +256,37 @@ export function projectEvent(state, event, { tagOf, isWrite }) {
     return foldToolResult(state, {
       callId: event.data?.message?.toolCallId,
       outcome: meta && typeof meta.outcome === 'string' ? meta.outcome : 'unknown',
+      reason: meta && typeof meta.rejectionReason === 'string' ? meta.rejectionReason : '',
     });
+  }
+  // 审批事件（dsh-user-approval 契约）：asked 带 callId，decided 只带 id，
+  // 所以 id→callId 的映射必须由 asked 记进 state，否则无法配对。
+  if (event?.type === 'approval/asked') {
+    const asked = foldApprovalAsked(state, {
+      toolName: event.data?.toolName,
+      callId: event.data?.callId,
+    });
+    if (asked === state) return state;
+    const id = event.data?.id;
+    if (typeof id !== 'string' || id === '' || typeof event.data?.callId !== 'string') return asked;
+    return { ...asked, approvals: { ...(asked.approvals ?? {}), [id]: event.data.callId } };
+  }
+  if (event?.type === 'approval/decided') {
+    const id = event.data?.id;
+    const callId = typeof id === 'string' ? state.approvals?.[id] : undefined;
+    if (callId === undefined) return state;
+    const { [id]: _dropped, ...approvals } = state.approvals ?? {};
+    return foldApprovalDecided({ ...state, approvals }, { callId, outcome: event.data?.outcome });
   }
   return state;
 }
 
 /**
- * 派生面向客户端的视图：canonical 顺序 + 五态
- * （pending 待开始 / active 进行中 / done 已完成 / failed 被拒 / unknown 待查证）。
+ * 派生面向客户端的视图：canonical 顺序 + 六态
+ * （pending 待开始 / awaiting 等审批 / active 进行中 / done 已完成 /
+ * failed 被拒 / unknown 待查证）。
  * 阶段状态只由写操作决定；更晚阶段发生过写操作时，把仍 active 的更早阶段
- * 视为已越过，但 failed / unknown 不会被掩盖。
+ * 视为已越过，但 awaiting / failed / unknown 不会被掩盖。
  */
 export function stageView(stageState) {
   const touched = stageState?.stages ?? {};
@@ -221,13 +300,17 @@ export function stageView(stageState) {
       writes: current?.writes ?? 0,
       lastOp: current?.lastOp ?? '',
       outcome: current?.outcome ?? '',
+      awaitingApproval: current?.awaitingApproval === true,
+      rejectionReason: current?.rejectionReason ?? '',
     };
   });
   let furthestWrite = -1;
   rows.forEach((row, index) => { if (row.writes > 0) furthestWrite = index; });
   const stages = rows.map((row, index) => {
     let status;
-    if (row.writes === 0) status = 'pending';
+    // 等人工审批优先于一切：这一刻写入还没落地，正是运营员要盯的一格。
+    if (row.awaitingApproval) status = 'awaiting';
+    else if (row.writes === 0) status = 'pending';
     else if (row.outcome === 'complete') status = 'done';
     else if (row.outcome === 'rejected') status = 'failed';
     else if (row.outcome === 'unknown') status = 'unknown';

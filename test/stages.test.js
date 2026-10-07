@@ -68,7 +68,7 @@ test('only known result codes settle a stage; anything else stays unknown', () =
 });
 
 test('a write call opens active and closes done on its complete result', () => {
-  let state = { inheritedEventCount: 0, lastSeq: 0, projectIds: [], stages: {} };
+  let state = { inheritedEventCount: 0, lastSeq: 0, projectIds: [], approvals: {}, stages: {} };
   state = foldToolCall(state, {
     callId: 'c1', operation: 'post_evidence_sources_upload', seq: 1, isWrite: true,
   });
@@ -79,7 +79,7 @@ test('a write call opens active and closes done on its complete result', () => {
 });
 
 test('read-only calls accumulate reads without lighting any stage', () => {
-  let state = { inheritedEventCount: 0, lastSeq: 0, projectIds: [], stages: {} };
+  let state = { inheritedEventCount: 0, lastSeq: 0, projectIds: [], approvals: {}, stages: {} };
   for (const operation of ['get_projects_by_projectid', 'get_evidence_sources', 'get_questions']) {
     state = foldToolCall(state, { callId: `r-${operation}`, operation, seq: 1, isWrite: false });
     state = foldToolResult(state, { callId: `r-${operation}`, outcome: 'complete' });
@@ -94,14 +94,14 @@ test('read-only calls accumulate reads without lighting any stage', () => {
 });
 
 test('a rejected write reports failed instead of being swallowed', () => {
-  let state = { inheritedEventCount: 0, lastSeq: 0, projectIds: [], stages: {} };
+  let state = { inheritedEventCount: 0, lastSeq: 0, projectIds: [], approvals: {}, stages: {} };
   state = foldToolCall(state, { callId: 'p1', operation: 'post_publish_records_confirm', seq: 1, isWrite: true });
   state = foldToolResult(state, { callId: 'p1', outcome: 'rejected' });
   assert.equal(statusOf(stageView(state), 'publish'), 'failed');
 });
 
 test('an unknown write outcome stays unknown and is not superseded by later stages', () => {
-  let state = { inheritedEventCount: 0, lastSeq: 0, projectIds: [], stages: {} };
+  let state = { inheritedEventCount: 0, lastSeq: 0, projectIds: [], approvals: {}, stages: {} };
   state = foldToolCall(state, { callId: 'p1', operation: 'post_publish_records_confirm', seq: 1, isWrite: true });
   state = foldToolResult(state, { callId: 'p1', outcome: 'unknown' });
   assert.equal(statusOf(stageView(state), 'publish'), 'unknown');
@@ -114,7 +114,7 @@ test('an unknown write outcome stays unknown and is not superseded by later stag
 });
 
 test('a later stage write closes an earlier stage that is still active', () => {
-  let state = { inheritedEventCount: 0, lastSeq: 0, projectIds: [], stages: {} };
+  let state = { inheritedEventCount: 0, lastSeq: 0, projectIds: [], approvals: {}, stages: {} };
   state = foldToolCall(state, { callId: 'c1', operation: 'post_evidence_sources_upload', seq: 1, isWrite: true });
   state = foldToolCall(state, { callId: 'c2', operation: 'post_facts_ai_extract', seq: 2, isWrite: true });
   const view = stageView(state);
@@ -123,7 +123,7 @@ test('a later stage write closes an earlier stage that is still active', () => {
 });
 
 test('re-entering a settled stage reopens it and non-geo calls leave state untouched', () => {
-  let state = { inheritedEventCount: 0, lastSeq: 0, projectIds: [], stages: {} };
+  let state = { inheritedEventCount: 0, lastSeq: 0, projectIds: [], approvals: {}, stages: {} };
   state = foldToolCall(state, { callId: 'c1', operation: 'post_publish_records_confirm', seq: 1, isWrite: true });
   state = foldToolResult(state, { callId: 'c1', outcome: 'complete' });
   assert.equal(statusOf(stageView(state), 'publish'), 'done');
@@ -140,7 +140,7 @@ test('re-entering a settled stage reopens it and non-geo calls leave state untou
 test('regression: a string-form tool/call event actually drives the projection', () => {
   // 这条断言对应 2026-10-07 的线上缺陷：apply 按对象读 arguments.operation，
   // 而 DSH 事件里它是字符串，导致 geo_api 的进度完全失效（阶段恒 pending）。
-  let state = { inheritedEventCount: 0, lastSeq: 0, projectIds: [], stages: {} };
+  let state = { inheritedEventCount: 0, lastSeq: 0, projectIds: [], approvals: {}, stages: {} };
   const callEvent = seq => ({
     seq,
     type: 'tool/call',
@@ -162,7 +162,7 @@ test('regression: a string-form tool/call event actually drives the projection',
 
 test('regression: missing result meta settles as unknown, never as success', () => {
   // GEO 业务失败不抛错，所以 tool/result.error 恒缺席；没有 meta 就没有结果语义。
-  let state = { inheritedEventCount: 0, lastSeq: 0, projectIds: [], stages: {} };
+  let state = { inheritedEventCount: 0, lastSeq: 0, projectIds: [], approvals: {}, stages: {} };
   state = projectEvent(state, {
     seq: 1,
     type: 'tool/call',
@@ -177,7 +177,7 @@ test('regression: missing result meta settles as unknown, never as success', () 
 });
 
 test('evidence upload drives the evidence stage through its own tool name', () => {
-  let state = { inheritedEventCount: 0, lastSeq: 0, projectIds: [], stages: {} };
+  let state = { inheritedEventCount: 0, lastSeq: 0, projectIds: [], approvals: {}, stages: {} };
   state = projectEvent(state, {
     seq: 1,
     type: 'tool/call',
@@ -194,8 +194,74 @@ test('evidence upload drives the evidence stage through its own tool name', () =
   assert.deepEqual(view.projects, ['42']);
 });
 
+test('approval/asked marks its stage as awaiting and survives unrelated events', () => {
+  let state = { inheritedEventCount: 0, lastSeq: 0, projectIds: [], approvals: {}, stages: {} };
+  state = foldToolCall(state, { callId: 'w1', operation: 'post_fact_revisions_by_id_confirm', seq: 1, isWrite: true });
+  state = projectEvent(state, { seq: 2, type: 'approval/asked', data: { id: 'apr-1', toolName: 'geo_api', callId: 'w1' } }, { tagOf, isWrite });
+  assert.equal(statusOf(stageView(state), 'fact'), 'awaiting');
+  assert.equal(state.approvals['apr-1'], 'w1', 'approval id must map back to its call');
+
+  // 别的阶段的只读调用不该清掉这格的等待态。
+  state = foldToolCall(state, { callId: 'r1', operation: 'get_questions', seq: 3, isWrite: false });
+  assert.equal(statusOf(stageView(state), 'fact'), 'awaiting');
+});
+
+test('approval/decided allowed clears the awaiting state without touching outcome', () => {
+  let state = { inheritedEventCount: 0, lastSeq: 0, projectIds: [], approvals: {}, stages: {} };
+  state = foldToolCall(state, { callId: 'w1', operation: 'post_detection_runs', seq: 1, isWrite: true });
+  state = projectEvent(state, { seq: 2, type: 'approval/asked', data: { id: 'apr-1', toolName: 'geo_api', callId: 'w1' } }, { tagOf, isWrite });
+  state = projectEvent(state, { seq: 3, type: 'approval/decided', data: { id: 'apr-1', outcome: 'allowed-once' } }, { tagOf, isWrite });
+  const view = stageView(state);
+  assert.equal(statusOf(view, 'detect'), 'active', 'allowed approval leaves the write still in flight');
+  assert.equal(state.approvals['apr-1'], undefined, 'the id must be consumed');
+});
+
+test('approval/decided rejected settles the stage as failed with a human reason', () => {
+  let state = { inheritedEventCount: 0, lastSeq: 0, projectIds: [], approvals: {}, stages: {} };
+  state = foldToolCall(state, { callId: 'w1', operation: 'post_publish_records_confirm', seq: 1, isWrite: true });
+  state = projectEvent(state, { seq: 2, type: 'approval/asked', data: { id: 'apr-9', toolName: 'geo_api', callId: 'w1' } }, { tagOf, isWrite });
+  state = projectEvent(state, { seq: 3, type: 'approval/decided', data: { id: 'apr-9', outcome: 'rejected' } }, { tagOf, isWrite });
+  const view = stageView(state);
+  assert.equal(statusOf(view, 'publish'), 'failed');
+  assert.equal(view.stages.find(s => s.key === 'publish').rejectionReason, '人工审批未通过');
+});
+
+test('approval events for non-GEO tools are ignored', () => {
+  let state = { inheritedEventCount: 0, lastSeq: 0, projectIds: [], approvals: {}, stages: {} };
+  state = foldToolCall(state, { callId: 'w1', operation: 'post_detection_runs', seq: 1, isWrite: true });
+  const before = state;
+  state = projectEvent(state, { seq: 2, type: 'approval/asked', data: { id: 'x', toolName: 'read_file', callId: 'w1' } }, { tagOf, isWrite });
+  assert.equal(state, before);
+});
+
+test('a rejection reason rides in on the result meta, and a read rejection is not recorded', () => {
+  let state = { inheritedEventCount: 0, lastSeq: 0, projectIds: [], approvals: {}, stages: {} };
+  state = foldToolCall(state, { callId: 'w1', operation: 'post_content_generation_tasks_by_id_execute', seq: 1, isWrite: true });
+  state = foldToolResult(state, { callId: 'w1', outcome: 'rejected', reason: '检测预算余额不足' });
+  const failed = stageView(state).stages.find(s => s.key === 'content');
+  assert.equal(failed.status, 'failed');
+  assert.equal(failed.rejectionReason, '检测预算余额不足');
+
+  // 只读调用被拒不留原因：它从未推进阶段，也没有「失败」可言。
+  let reads = { inheritedEventCount: 0, lastSeq: 0, projectIds: [], approvals: {}, stages: {} };
+  reads = foldToolCall(reads, { callId: 'r1', operation: 'get_publish_balance', seq: 1, isWrite: false });
+  reads = foldToolResult(reads, { callId: 'r1', outcome: 'rejected', reason: '不该出现' });
+  assert.equal(reads.stages.publish.rejectionReason, '');
+});
+
+test('entering a stage again clears the previous rejection reason', () => {
+  let state = { inheritedEventCount: 0, lastSeq: 0, projectIds: [], approvals: {}, stages: {} };
+  state = foldToolCall(state, { callId: 'w1', operation: 'post_detection_runs', seq: 1, isWrite: true });
+  state = foldToolResult(state, { callId: 'w1', outcome: 'rejected', reason: '旧原因' });
+  assert.equal(stageView(state).stages.find(s => s.key === 'detect').rejectionReason, '旧原因');
+  state = foldToolCall(state, { callId: 'w2', operation: 'post_detection_runs', seq: 2, isWrite: true });
+  const detect = stageView(state).stages.find(s => s.key === 'detect');
+  assert.equal(detect.rejectionReason, '', 'a retry must not inherit the previous failure reason');
+  assert.equal(detect.awaitingApproval, false);
+});
+
 test('a read result never settles a stage and duplicate results are idempotent', () => {
-  let state = { inheritedEventCount: 0, lastSeq: 0, projectIds: [], stages: {} };
+  let state = { inheritedEventCount: 0, lastSeq: 0, projectIds: [], approvals: {}, stages: {} };
   state = foldToolCall(state, { callId: 'r1', operation: 'get_questions', seq: 1, isWrite: false });
   const afterRead = foldToolResult(state, { callId: 'r1', outcome: 'complete' });
   assert.equal(afterRead, state, 'read result must not write into the stage');
