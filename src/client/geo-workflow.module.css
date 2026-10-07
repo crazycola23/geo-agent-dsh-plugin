@@ -1,7 +1,17 @@
+/* 主视图宿主是固定高度的 flex 列且不提供滚动——页面根节点必须自当滚动容器
+   （与官方 schedule 页 pageScroll 同款：flex:1 + min-height:0 + overflow:auto）。 */
 .page {
   display: flex;
   flex-direction: column;
   gap: 16px;
+  width: 100%;
+  max-width: 980px;
+  margin: 0 auto;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+  padding-bottom: 24px;
 }
 
 .stepperCard {
