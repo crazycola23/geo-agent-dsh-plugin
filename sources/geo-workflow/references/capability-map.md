@@ -4,7 +4,7 @@ OpenAPI SHA-256：`03e47c6e16a891f071a78b968f26db4a275465938ab9a4c7c337e1fc0234b
 
 端点来自 `scrm-specs/30-contracts/08-openapi.yaml`。修改该契约后，在插件目录执行 `npm run generate:catalog`；不要手改下列清单或 `src/generated/openapi.catalog.json`。生成器会验证路由名冲突与请求体引用。
 
-当前纳入 147 个操作，排除 65 个操作。GET 只读；其余请求必须通过 DSH 操作员审批后才发出。所有后端权限仍由 GEO 校验。
+当前纳入 151 个操作，排除 61 个操作。GET 只读；其余请求必须通过 DSH 操作员审批后才发出。所有后端权限仍由 GEO 校验。
 
 ## agent（4）
 
@@ -38,15 +38,19 @@ OpenAPI SHA-256：`03e47c6e16a891f071a78b968f26db4a275465938ab9a4c7c337e1fc0234b
 | post_questions_by_id_transition | POST | /questions/{id}/transition | geo:question:enable | required: Question + transition + version；24h 传输重放不重复推进状态或追加审计 | 问题状态迁移（批准/暂停/恢复/退役/丢弃） |
 | get_strategy_snapshots_by_id | GET | /strategy-snapshots/{id} | geo:question:view | — | 策略快照（M06） |
 
-## project（7）
+## project（11）
 
 | 工具操作名 | 方法 | 路由 | 业务权限 | 幂等约束 | 描述 |
 |---|---|---|---|---|---|
+| get_projects | GET | /projects | geo:project:view | — | 项目列表（S03） |
+| post_projects | POST | /projects | geo:project:create | — | 创建项目（保存草稿） |
 | get_projects_by_projectid | GET | /projects/{projectId} | geo:project:view | — | 项目档案（S04） |
 | put_projects_by_projectid | PUT | /projects/{projectId} | geo:project:edit | — | 编辑项目档案 |
 | post_projects_by_projectid_budget_buckets | POST | /projects/{projectId}/budget-buckets | geo:project:edit | required: projectId + budget bucket + request body | 补充项目预算桶 |
 | post_projects_by_projectid_start | POST | /projects/{projectId}/start | geo:project:edit | project_id + startup_version | 启动项目 |
 | get_projects_by_projectid_initial_tasks | GET | /projects/{projectId}/initial-tasks | geo:project:view | — | 初始待办（派生，BR-PROJECT-005） |
+| post_customers | POST | /customers | geo:project:create | optional: transport replay protection; same key returns the first response | 新增客户主体（M01 子弹窗） |
+| get_customers | GET | /customers | geo:project:create | — | 客户选择器（M01） |
 | get_platforms | GET | /platforms | geo:project:view | — | 检测平台选择器（M01 重点平台） |
 | get_platform_accounts | GET | /platform-accounts | geo:project:view | — | 项目绑定的客户平台账号列表 |
 
@@ -208,8 +212,6 @@ OpenAPI SHA-256：`03e47c6e16a891f071a78b968f26db4a275465938ab9a4c7c337e1fc0234b
 | 方法 | 路由 | 原因 |
 |---|---|---|
 | GET | /workbench/summary | 该权限不在 07.projectApiTokens.allowedScopes 中 |
-| GET | /projects | 该端点在 07.projectApiTokens.excludedToolPaths 中排除 |
-| POST | /projects | 该端点在 07.projectApiTokens.excludedToolPaths 中排除 |
 | POST | /projects/{projectId}/transfer-owner | 该端点在 07.projectApiTokens.excludedToolPaths 中排除 |
 | GET | /projects/{projectId}/api-tokens | 该端点在 07.projectApiTokens.excludedToolPaths 中排除 |
 | POST | /projects/{projectId}/api-tokens | 该端点在 07.projectApiTokens.excludedToolPaths 中排除 |
@@ -217,8 +219,6 @@ OpenAPI SHA-256：`03e47c6e16a891f071a78b968f26db4a275465938ab9a4c7c337e1fc0234b
 | GET | /auth/project-token-context | 该端点在 07.projectApiTokens.excludedToolPaths 中排除 |
 | POST | /projects/{projectId}/archive | 该权限不在 07.projectApiTokens.allowedScopes 中 |
 | POST | /projects/{projectId}/restore | 该权限不在 07.projectApiTokens.allowedScopes 中 |
-| POST | /customers | 该权限不在 07.projectApiTokens.allowedScopes 中 |
-| GET | /customers | 该权限不在 07.projectApiTokens.allowedScopes 中 |
 | GET | /evidence-sources/{sourceId}/file | 该路径段 file 在 07.projectApiTokens.excludedPathSegments 中排除 |
 | GET | /projects/{projectId}/fact-references | 该权限不在 07.projectApiTokens.allowedScopes 中 |
 | POST | /projects/{projectId}/fact-references | 该权限不在 07.projectApiTokens.allowedScopes 中 |

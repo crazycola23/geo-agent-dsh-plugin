@@ -6,7 +6,7 @@
 - `capability-map.md` 是同一生成器写出的全量人读覆盖清单，包括工具名、方法、路由、权限、幂等约束和未暴露端点。
 - 两者的源文件都是 `scrm-specs/30-contracts/08-openapi.yaml`。不要手改生成目录，也不要在 Skill 中另抄请求 schema。
 
-当前快照 SHA-256 为 `0229313233b4ddd49823c09735c07ab5ab26b5befa5125b7a8a5a6635c93f965`：筛选覆盖 177 个操作，排除 31 个操作。除 OpenAPI 外，纳入范围还受 `scripts/generate-catalog.mjs` 的路径与权限过滤策略约束；该策略排除 `geo:collector:account:admin`、`geo:project:archive`、`geo:project:restore`、`geo:project:delete`、`geo:content:delete`、`geo:channel:manage`、`geo:budget:release`、`geo:audit:view` 和 `geo:audit:export`。对应目录边界由插件测试覆盖。校验成功只证明生成物和这份 OpenAPI 文件及当前筛选策略相同，不证明线上后端实现一致或用户权限有效。
+当前快照（2026-10-07 实测）：源 `scrm-specs/30-contracts/08-openapi.yaml` SHA-256 为 `03e47c6e16a891f071a78b968f26db4a275465938ab9a4c7c337e1fc0234be10`，生成的 `openapi.catalog.json` SHA-256 为 `7e870a1603df6a481fb634ed86c9ae4d071560bdc0518ff2f7467d1038f7d0e8`；筛选覆盖 151 个操作，排除 61 个。除 OpenAPI 外，纳入范围还受 `scripts/generate-catalog.mjs` 的路径与权限过滤策略约束；该策略排除 `geo:collector:account:admin`、`geo:project:archive`、`geo:project:restore`、`geo:project:delete`、`geo:content:delete`、`geo:channel:manage`、`geo:budget:release`、`geo:audit:view` 和 `geo:audit:export`。对应目录边界由插件测试覆盖。校验成功只证明生成物和这份 OpenAPI 文件及当前筛选策略相同，不证明线上后端实现一致或用户权限有效。
 
 ## 哪些内容由人维护
 
