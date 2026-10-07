@@ -23,6 +23,7 @@ type SettingsValue = {
   apiBaseUrl?: string
   apiBasePath?: string
   evidenceDirectory?: string
+  exportDirectory?: string
   timeoutMs?: number
   projects?: ProjectSettings[]
   restrictTools?: boolean
@@ -174,6 +175,7 @@ export function GeoSettingsCard(props: GeoSettingsCardProps): ReactNode {
   const [apiBaseUrl, setApiBaseUrl] = useState(value.apiBaseUrl ?? '')
   const [apiBasePath, setApiBasePath] = useState(value.apiBasePath ?? '')
   const [evidenceDirectory, setEvidenceDirectory] = useState(value.evidenceDirectory ?? '')
+  const [exportDirectory, setExportDirectory] = useState(value.exportDirectory ?? '')
   const [timeoutSeconds, setTimeoutSeconds] = useState(String(Math.round((value.timeoutMs ?? 30_000) / 1_000)))
   const [projects, setProjects] = useState(() => draftsFrom(value.projects))
   const [credentialState, setCredentialState] = useState<Record<string, CredentialInfo>>({})
@@ -196,9 +198,10 @@ export function GeoSettingsCard(props: GeoSettingsCardProps): ReactNode {
     setApiBaseUrl(value.apiBaseUrl ?? '')
     setApiBasePath(value.apiBasePath ?? '')
     setEvidenceDirectory(value.evidenceDirectory ?? '')
+    setExportDirectory(value.exportDirectory ?? '')
     setTimeoutSeconds(String(Math.round((value.timeoutMs ?? 30_000) / 1_000)))
     setProjects(draftsFrom(value.projects))
-  }, [dirty, value.apiBaseUrl, value.apiBasePath, value.evidenceDirectory, value.timeoutMs, value.projects])
+  }, [dirty, value.apiBaseUrl, value.apiBasePath, value.evidenceDirectory, value.exportDirectory, value.timeoutMs, value.projects])
 
   const refsInUse = projects.flatMap(project => validProjectId(project.projectId)
     ? Object.values(projectCredentialRefs(project.projectId.trim()))
@@ -338,6 +341,7 @@ export function GeoSettingsCard(props: GeoSettingsCardProps): ReactNode {
       await scope.set('apiBaseUrl', origin)
       await scope.set('apiBasePath', gatewayPrefix)
       await scope.set('evidenceDirectory', evidenceDirectory.trim())
+      await scope.set('exportDirectory', exportDirectory.trim())
       await scope.set('timeoutMs', seconds * 1_000)
       await scope.set('projects', normalizedProjects)
       projectSettingsSaved = true
@@ -362,6 +366,7 @@ export function GeoSettingsCard(props: GeoSettingsCardProps): ReactNode {
         persisted: true,
       })))
       setEvidenceDirectory(evidenceDirectory.trim())
+      setExportDirectory(exportDirectory.trim())
       setApiBaseUrl(origin)
       setApiBasePath(gatewayPrefix)
       setRemovedProjectIds([])
@@ -481,6 +486,15 @@ export function GeoSettingsCard(props: GeoSettingsCardProps): ReactNode {
               testId="geo-evidence-directory"
               disabled={busy || !snapshot.writable}
               onChange={(next) => { markDirty(); setEvidenceDirectory(next) }}
+            />
+            <Field
+              label="文章导出目录"
+              hint="把稿件导出成 .md 文件的地方；留空即用默认目录（DSH 数据目录下的 geo-articles）"
+              value={exportDirectory}
+              placeholder="默认：DSH 数据目录下的 geo-articles"
+              testId="geo-export-directory"
+              disabled={busy || !snapshot.writable}
+              onChange={(next) => { markDirty(); setExportDirectory(next) }}
             />
             <div className={styles.twoColumns}>
               <Field

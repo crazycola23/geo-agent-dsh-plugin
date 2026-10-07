@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
-import { lstat, open, realpath, readdir } from 'node:fs/promises';
+import { lstat, mkdir, open, realpath, readdir } from 'node:fs/promises';
 import { basename, dirname, extname, resolve } from 'node:path';
 import { Readable } from 'node:stream';
 import { isPlainObject, validateOperationArgs, validateValue } from './schema.js';
@@ -126,6 +126,232 @@ export async function listStagedEvidenceFiles(evidenceDirectory) {
   } catch {
     return { ok: false, error: '配置的资料投递目录当前读不到，请检查路径是否存在、是否有读取权限。', files: [] };
   }
+}
+
+/** Windows 与 POSIX 都不接受的路径字符；正文标题直接当文件名会炸，先统一替换。 */
+const unsafeFileNameChars = /[\\/:*?"<>|]/g;
+
+/**
+ * 由稿件标题与版本号推一个安全的 .md 文件名。标题来自 GEO，不能假定它干净：
+ * 可能带路径分隔符、引号、控制字符或超长文本，所以这里做的是「收敛」而不是「校验」。
+ */
+export function articleExportFileName(title, versionNo, articleVersionId) {
+  const rawTitle = typeof title === 'string' && title.trim() !== '' ? title.trim() : `article-${articleVersionId}`;
+  const safeTitle = rawTitle
+    .replace(unsafeFileNameChars, ' ')
+    .replace(/[\u0000-\u001f\u007f]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .replace(/^[.\s]+/, '')
+    .trim()
+    .slice(0, 120)
+    .replace(/[.\s]+$/, '');
+  const suffix = typeof versionNo === 'string' && /^v[0-9][0-9.]*$/.test(versionNo.trim())
+    ? versionNo.trim()
+    : `id-${articleVersionId}`;
+  return `${safeTitle.length > 0 ? safeTitle : `article-${articleVersionId}`}-${suffix}.md`;
+}
+
+/**
+ * 预检导出目录：必须在向 GEO 发出任何请求之前跑完。没配目录时还去读一次接口，
+ * 只会白白多一轮往返，所以这一关前置。
+ */
+async function resolveExportRoot(exportDirectory) {
+  if (typeof exportDirectory !== 'string' || exportDirectory.trim() === '') {
+    throw new Error('还没有配置文章导出目录（GEO_EXPORT_DIRECTORY），无法把稿件写到本地。');
+  }
+  try {
+    // 导出目录是插件自己写东西的地方，默认位置可能还不存在，这里直接建出来；
+    // 显式填写的路径同样受益，省掉「先手动建目录」这一跳。
+    await mkdir(exportDirectory, { recursive: true });
+    return await realpath(exportDirectory);
+  } catch {
+    throw new Error('文章导出目录不可用（既不存在也建不出来），请检查路径与权限。');
+  }
+}
+
+/**
+ * 解析导出目标：只允许直接落在已配置的导出目录里，拒绝子目录、路径穿越、
+ * 绝对路径，以及用符号链接把写入引到别处。
+ */
+async function resolveExportTarget(root, fileName) {
+  if (typeof fileName !== 'string' || fileName.length === 0 || fileName.length > 180
+      || basename(fileName) !== fileName || ['.', '..'].includes(fileName)
+      || unsafeFileNameChars.test(fileName) || /[\u0000-\u001f\u007f]/.test(fileName)
+      || !fileName.toLowerCase().endsWith('.md')) {
+    throw new Error('导出文件名必须是导出目录下的单个 .md 文件，不能带路径、子目录或控制字符。');
+  }
+
+  const candidate = resolve(root, fileName);
+  if (dirname(candidate) !== root) throw new Error('导出文件必须直接放在已配置的导出目录里，不能带子目录。');
+
+  const existing = await lstat(candidate).catch(() => null);
+  if (existing && (existing.isSymbolicLink() || !existing.isFile())) {
+    throw new Error('导出目标已存在且不是普通文件，已拒绝覆盖。');
+  }
+  return candidate;
+}
+
+function articleMarkdown({ data, articleVersionId, projectId, exportedAt, galleryImages = [] }) {
+  const claimCount = Array.isArray(data.claims) ? data.claims.length : 0;
+  const factCount = Array.isArray(data.factRevisionIds) ? data.factRevisionIds.length : 0;
+  const rows = [
+    ['项目', projectId],
+    ['稿件版本', `${articleVersionId}（${data.versionNo ?? '—'}）`],
+    ['内容任务', data.contentTaskName ?? '—'],
+    ['主问题', data.questionText ?? '—'],
+    ['状态', `${data.statusLabel ?? data.status ?? '—'}${data.enabled === false ? ' / 已停用' : ''}`],
+    ['公开声明', `${claimCount} 条`],
+    ['绑定事实', `${factCount} 条`],
+    ['导出时间', exportedAt],
+  ];
+  return [
+    `# ${data.title ?? articleVersionId}`,
+    '',
+    '| 字段 | 值 |',
+    '|---|---|',
+    ...rows.map(([key, value]) => `| ${key} | ${String(value).replace(/\|/g, '\\|')} |`),
+    '',
+    '---',
+    '',
+    data.body ?? '',
+    '',
+    // 图片按「依赖 OSS 直链」处理：只写链接，不下载副本。链接失效时正文文字仍然完整。
+    ...(galleryImages.length > 0
+      ? [
+        '## 素材图片（项目图库，OSS 直链）',
+        '',
+        '以下图片取自项目图库，按直链引用，未下载副本；链接有效期以对象存储为准。',
+        '',
+        ...galleryImages.flatMap(image => [`![${image.name}](${image.url})`, '']),
+      ]
+      : []),
+  ].join('\n');
+}
+
+const operation_export = 'export_article';
+
+/**
+ * 把一篇稿件导出成导出目录里的 .md 文件。只读 GEO（不产生任何 GEO 写入），
+ * 落盘位置受导出目录约束。正文缺失或被截断时拒绝导出，避免写出半截稿子。
+ */
+export async function executeGeoArticleExport({ catalog, args, exportDirectory, baseUrl, basePath = '', token, signal, fetchImpl = fetch, timeoutMs = 30_000 }) {
+  if (!isPlainObject(args)) return { ok: false, outcome: 'rejected', error: '工具参数必须是一个对象。' };
+  const allowedArgs = new Set(['projectId', 'articleVersionId', 'fileName', 'includeGalleryImages']);
+  const unknown = Object.keys(args).filter(key => !allowedArgs.has(key));
+  if (unknown.length) return { ok: false, outcome: 'rejected', error: `导出工具不认识的参数：${unknown.join('、')}` };
+  if (args.includeGalleryImages !== undefined && typeof args.includeGalleryImages !== 'boolean') {
+    return { ok: false, outcome: 'rejected', error: 'includeGalleryImages 只能是 true 或 false。' };
+  }
+  const projectId = String(args.projectId ?? '');
+  if (!/^[1-9]\d*$/.test(projectId)) return { ok: false, outcome: 'rejected', error: '项目编号必须是有效的 GEO 项目编号：正整数' };
+  const requestedVersionId = args.articleVersionId === undefined ? undefined : String(args.articleVersionId);
+  if (requestedVersionId !== undefined && !/^[1-9]\d*$/.test(requestedVersionId)) {
+    return { ok: false, outcome: 'rejected', error: '稿件版本编号必须是有效的正整数。' };
+  }
+
+  // 目录这一关前置：没配目录或目录不可用时直接拒绝，不向 GEO 发出任何请求。
+  let exportRoot;
+  try { exportRoot = await resolveExportRoot(exportDirectory); }
+  catch (error) { return { ok: false, outcome: 'rejected', operation: operation_export, error: error.message }; }
+
+  const shared = { catalog, baseUrl, basePath, token, signal, fetchImpl, timeoutMs };
+  let articleVersionId = requestedVersionId;
+  if (articleVersionId === undefined) {
+    const listing = await executeGeoOperation({
+      ...shared,
+      operationName: 'get_article_versions',
+      args: { query: { projectId, pageNum: 1, pageSize: 1, sort: 'created_desc' } },
+    });
+    if (!listing.ok) {
+      return { ok: false, outcome: listing.outcome ?? 'rejected', operation: 'get_article_versions', error: listing.error ?? '读不到稿件列表，无法确定要导出哪一篇。', validationErrors: listing.validationErrors };
+    }
+    const newest = Array.isArray(listing.data?.rows) ? listing.data.rows[0] : undefined;
+    if (!newest?.id) return { ok: false, outcome: 'rejected', operation: 'get_article_versions', error: '这个项目还没有可导出的稿件。' };
+    articleVersionId = String(newest.id);
+  }
+
+  const detail = await executeGeoOperation({
+    ...shared,
+    operationName: 'get_article_versions_by_id',
+    args: { pathParams: { id: articleVersionId } },
+  });
+  if (!detail.ok) {
+    return { ok: false, outcome: detail.outcome ?? 'rejected', operation: 'get_article_versions_by_id', articleVersionId, error: detail.error ?? '读不到这篇稿件。', validationErrors: detail.validationErrors };
+  }
+  const data = detail.data;
+  if (!isPlainObject(data)) return { ok: false, outcome: 'rejected', operation: 'get_article_versions_by_id', articleVersionId, error: 'GEO 没有返回稿件详情。' };
+  if (typeof data.body !== 'string' || data.body.trim() === '') {
+    return { ok: false, outcome: 'rejected', operation: 'get_article_versions_by_id', articleVersionId, error: '这篇稿件没有正文，导出只会得到一个空文件，已跳过。' };
+  }
+  // 读取层对超长字符串有安全上限（8 000 字符）。宁可拒绝，也不写出一篇被截断的稿子。
+  if (detail.truncated === true && data.body.endsWith('…')) {
+    return { ok: false, outcome: 'rejected', operation: 'get_article_versions_by_id', articleVersionId, error: '正文超过单次读取上限，已被截断；请改用带筛选条件的读取方式，或把稿件拆短后导出。' };
+  }
+
+  const fileName = args.fileName === undefined
+    ? articleExportFileName(data.title, data.versionNo, articleVersionId)
+    : String(args.fileName);
+
+  let target;
+  try { target = await resolveExportTarget(exportRoot, fileName); }
+  catch (error) { return { ok: false, outcome: 'rejected', operation: operation_export, articleVersionId, fileName, error: error.message }; }
+
+  // 图片走「依赖 OSS 直链」：只取链接，不下载副本。
+  let galleryImages = [];
+  if (args.includeGalleryImages === true) {
+    const gallery = await executeGeoOperation({
+      ...shared,
+      operationName: 'get_oss_images',
+      args: { query: { projectId, pageNum: 1, pageSize: 100 } },
+    });
+    if (!gallery.ok) {
+      return { ok: false, outcome: gallery.outcome ?? 'rejected', operation: 'get_oss_images', articleVersionId, error: gallery.error ?? '读不到项目图库，无法把图片链接写进导出文件。', validationErrors: gallery.validationErrors };
+    }
+    galleryImages = (Array.isArray(gallery.data?.rows) ? gallery.data.rows : [])
+      .filter(image => typeof image?.url === 'string' && image.url.trim() !== '')
+      .map(image => ({
+        name: typeof image.originalName === 'string' && image.originalName.trim() !== ''
+          ? image.originalName.trim()
+          : String(image.fileName ?? 'image'),
+        url: image.url.trim(),
+      }));
+  }
+
+  const exportedAt = new Date().toISOString();
+  const markdown = articleMarkdown({ data, articleVersionId, projectId, exportedAt, galleryImages });
+  const flags = constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | (constants.O_NOFOLLOW || 0);
+  let handle;
+  try {
+    handle = await open(target, flags, 0o600);
+  } catch {
+    return { ok: false, outcome: 'rejected', operation: operation_export, articleVersionId, fileName, error: '写不了导出文件，请确认导出目录存在且当前用户有写入权限。' };
+  }
+  try {
+    await handle.writeFile(markdown, 'utf8');
+    await handle.close();
+  } catch {
+    await handle.close().catch(() => {});
+    return { ok: false, outcome: 'rejected', operation: operation_export, articleVersionId, fileName, error: '写入导出文件时出错，文件可能不完整，请检查后重试。' };
+  }
+
+  return {
+    ok: true,
+    outcome: 'complete',
+    operation: operation_export,
+    articleVersionId,
+    fileName,
+    directory: exportRoot,
+    title: typeof data.title === 'string' ? data.title : '',
+    versionNo: typeof data.versionNo === 'string' ? data.versionNo : '',
+    status: typeof data.status === 'string' ? data.status : '',
+    enabled: data.enabled !== false,
+    bodyChars: data.body.length,
+    claimCount: Array.isArray(data.claims) ? data.claims.length : 0,
+    galleryImageCount: galleryImages.length,
+    bytes: Buffer.byteLength(markdown, 'utf8'),
+    exportedAt,
+    note: '稿件正文已写入导出文件；正文内容以 GEO 记录为准，本地文件只是工作副本。',
+  };
 }
 
 export function resolveApiOrigin(baseUrl) {

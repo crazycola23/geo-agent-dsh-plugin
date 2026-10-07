@@ -4,7 +4,7 @@ import { dirname, resolve } from 'node:path';
 import * as z from 'zod';
 import { defineTool } from '@deepseek-ai/dsh-tools';
 import { createGeoAuthProvider, executeWithGeoProjectToken } from './auth-provider.js';
-import { executeGeoOperation, executeGeoEvidenceUpload, listStagedEvidenceFiles, describeOperation, isWriteOperation } from './api-client.js';
+import { executeGeoOperation, executeGeoEvidenceUpload, executeGeoArticleExport, listStagedEvidenceFiles, describeOperation, isWriteOperation } from './api-client.js';
 import { Config, pluginSettings } from './config.js';
 import { resolveProjectSelection } from './project-context.js';
 import { schemaSummary } from './schema.js';
@@ -25,6 +25,7 @@ const toolNames = [
   'geo_describe_operation',
   'geo_list_evidence_files',
   'geo_upload_evidence',
+  'geo_export_article',
   'geo_progress_note',
   'geo_connection_status',
   'geo_approval_policy',
@@ -331,6 +332,24 @@ export function apply(ctx, config = {}) {
     ),
   }));
 
+  // 文章导出：把稿件正文落成导出目录里的 .md 文件，给运营员在本地看和改。
+  // 它只读 GEO、只写本地文件，所以不进 POLICY_DOMAINS，也不弹 GEO 审批——这里
+  // 松的是「谁能在本地留一份副本」，紧的仍然是导出目录本身（见 resolveExportTarget）。
+  ctx.tools.register(defineGeoTool({
+    name: 'geo_export_article',
+    description: '把一篇 GEO 稿件导出成导出目录里的 .md 文件（标题、元信息、正文），便于在本地查看与修订。缺省导出该项目最新一篇；只接受导出目录下的单个 .md 文件名，绝对路径与子目录一律拒绝。只读 GEO，不产生任何 GEO 写入。',
+    parameters: {
+      projectId: { type: 'string', required: true, description: '要使用的 GEO 项目——它的访问令牌保存在 DSH 凭据里。' },
+      articleVersionId: { type: 'string', description: '可选。稿件版本编号；不传则导出该项目最新一篇。' },
+      fileName: { type: 'string', description: '可选。导出文件名（须以 .md 结尾，不能带路径）；不传则按稿件标题与版本号生成。' },
+      includeGalleryImages: { type: 'boolean', description: '可选。true 时把项目图库的图片以 OSS 直链写进导出文件的「素材图片」一节；不下载图片副本。' },
+    },
+    async execute(args, exec) {
+      const settings = currentSettings();
+      return executeWithGeoProjectToken(auth, args.projectId, token => executeGeoArticleExport({ catalog, args, exportDirectory: settings.exportDirectory, baseUrl: settings.baseUrl, basePath: settings.basePath, token, signal: exec.signal, timeoutMs: settings.timeoutMs }), settings);
+    },
+  }));
+
 
   // 进度说明：由 AI 主动写，不是每次调用的机械流水——阶段网格已经给出了调用
   // 计数，「AI 做了什么」需要的是结论而不是操作序列。何时该写、写什么粒度见
@@ -368,6 +387,7 @@ export function apply(ctx, config = {}) {
         expiresAt: authStatus.expiresAt,
         error: authStatus.error,
         evidenceDirectoryConfigured: typeof settings.evidenceDirectory === 'string' && settings.evidenceDirectory.length > 0,
+        exportDirectoryConfigured: typeof settings.exportDirectory === 'string' && settings.exportDirectory.length > 0,
         tokenValueExposed: false,
         operationCount: operationNames.length,
         catalogDigest: catalog.source.sha256,

@@ -1,4 +1,17 @@
 import Schema from '@deepseek-ai/schemastery';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+
+/**
+ * 导出目录的默认位置：跟 DSH 自己的数据同域，运营员不必先建目录才能用导出。
+ * DSH_HOME 显式设置时跟着它走，否则落在 ~/.dsh 下。
+ */
+function defaultExportDirectory(env = process.env) {
+  const home = typeof env.DSH_HOME === 'string' && env.DSH_HOME.trim() !== ''
+    ? env.DSH_HOME.trim()
+    : join(homedir(), '.dsh');
+  return join(home, 'geo-articles');
+}
 
 const defaultTimeout = Number.isInteger(Number(process.env.GEO_API_TIMEOUT_MS))
   && Number(process.env.GEO_API_TIMEOUT_MS) >= 1_000
@@ -17,6 +30,10 @@ export const Config = Schema.object({
   // 留空表示「没有前缀」，适用于服务地址本身已经代理了接口路径的部署方式。
   apiBasePath: Schema.string().default(process.env.GEO_API_BASE_PATH ?? '').volatile(),
   evidenceDirectory: Schema.string().default(process.env.GEO_EVIDENCE_DIRECTORY ?? '').volatile(),
+  // 文章导出目录：geo_export_article 把稿件正文落成 .md 文件的地方。与投递目录
+  // 分开配置——一个是往 GEO 送，一个是往本地取，方向相反，混用容易把待上传的
+  // 资料和导出的稿件搅在一起。留空表示禁用导出工具。
+  exportDirectory: Schema.string().default(process.env.GEO_EXPORT_DIRECTORY ?? defaultExportDirectory()).volatile(),
   timeoutMs: Schema.number().min(1_000).max(120_000).step(1_000).default(defaultTimeout).volatile(),
   // 工具隔离开关。开启（默认）时，这个 DSH 运行时里的每个智能体都只能看见本
   // 插件自己的工具——在专用的 GEO 环境里这是对的，装进共用环境则会连带屏蔽
@@ -55,6 +72,7 @@ export function pluginSettings(config = {}, env = process.env) {
   const configuredBaseUrl = currentValue(config.apiBaseUrl);
   const configuredBasePath = currentValue(config.apiBasePath);
   const configuredEvidenceDirectory = currentValue(config.evidenceDirectory);
+  const configuredExportDirectory = currentValue(config.exportDirectory);
   const timeout = Number(currentValue(config.timeoutMs));
   const configuredProjects = currentValue(config.projects);
   const configuredRestrictTools = currentValue(config.restrictTools);
@@ -68,6 +86,9 @@ export function pluginSettings(config = {}, env = process.env) {
     evidenceDirectory: typeof configuredEvidenceDirectory === 'string' && configuredEvidenceDirectory.trim() !== ''
       ? configuredEvidenceDirectory.trim()
       : env.GEO_EVIDENCE_DIRECTORY,
+    exportDirectory: typeof configuredExportDirectory === 'string' && configuredExportDirectory.trim() !== ''
+      ? configuredExportDirectory.trim()
+      : (env.GEO_EXPORT_DIRECTORY ?? defaultExportDirectory(env)),
     timeoutMs: Number.isFinite(timeout) && timeout >= 1_000 && timeout <= 120_000
       ? timeout
       : defaultTimeout,

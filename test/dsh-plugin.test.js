@@ -186,8 +186,8 @@ test('plugin registers the generated API surface and restricts each agent to GEO
   assert.equal(warnings.length, 1);
   assert.match(warnings[0], /工具隔离已生效/);
   assert.match(warnings[0], /restrictTools/);
-  assert.deepEqual(registered.map(tool => tool.name), ['geo_api', 'geo_describe_operation', 'geo_list_evidence_files', 'geo_upload_evidence', 'geo_progress_note', 'geo_connection_status', 'geo_approval_policy']);
-  const expectedRestriction = { allow: ['geo_api', 'geo_describe_operation', 'geo_list_evidence_files', 'geo_upload_evidence', 'geo_progress_note', 'geo_connection_status', 'geo_approval_policy', 'ask_user_question', 'schedule_create', 'schedule_list', 'schedule_update', 'schedule_delete'] };
+  assert.deepEqual(registered.map(tool => tool.name), ['geo_api', 'geo_describe_operation', 'geo_list_evidence_files', 'geo_upload_evidence', 'geo_export_article', 'geo_progress_note', 'geo_connection_status', 'geo_approval_policy']);
+  const expectedRestriction = { allow: ['geo_api', 'geo_describe_operation', 'geo_list_evidence_files', 'geo_upload_evidence', 'geo_export_article', 'geo_progress_note', 'geo_connection_status', 'geo_approval_policy', 'ask_user_question', 'schedule_create', 'schedule_list', 'schedule_update', 'schedule_delete'] };
   assert.deepEqual(existing.state.restriction, expectedRestriction);
   assert.equal(events.has('tools/pre-execute'), true);
   assert.equal(events.has('agent/created'), true);
@@ -247,7 +247,7 @@ test('restrictTools false keeps the GEO tools but never restricts an agent', () 
   // No isolation means no isolation notice.
   assert.equal(warnings.length, 0);
   // The tool surface is identical to the isolating configuration …
-  assert.deepEqual(registered.map(tool => tool.name), ['geo_api', 'geo_describe_operation', 'geo_list_evidence_files', 'geo_upload_evidence', 'geo_progress_note', 'geo_connection_status', 'geo_approval_policy']);
+  assert.deepEqual(registered.map(tool => tool.name), ['geo_api', 'geo_describe_operation', 'geo_list_evidence_files', 'geo_upload_evidence', 'geo_export_article', 'geo_progress_note', 'geo_connection_status', 'geo_approval_policy']);
   // … but nothing is masked, for the existing agent or any later one.
   assert.equal(state.restriction, undefined);
   events.get('agent/created')({ agent: makeAgent() });
