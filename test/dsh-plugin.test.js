@@ -123,6 +123,7 @@ test('side-effect-free query POSTs pass and publish writes are a hard ask under 
     contentGenerationPolicy: 'agent',
     detectionPolicy: 'agent',
     reportPolicy: 'agent',
+    injectionPolicy: 'agent',
   };
   for (const operation of ['post_publish_records_preview', 'post_publish_records_preview_from_resource', 'post_publish_records_by_id_query_order', 'post_detection_attempts_by_id_query_order']) {
     const allowed = await geoApprovalDecision({
@@ -138,6 +139,48 @@ test('side-effect-free query POSTs pass and publish writes are a hard ask under 
     }, next, catalog, allAgent);
     assert.equal(hardAsk.kind, 'ask', operation);
   }
+});
+
+test('content injection writes stay a human ask under every delegation policy (T-OPEN-42)', async () => {
+  const next = async () => ({ kind: 'allow' });
+  const allAgent = {
+    factConfirmPolicy: 'agent',
+    contentPrepPolicy: 'agent',
+    contentGenerationPolicy: 'agent',
+    detectionPolicy: 'agent',
+    reportPolicy: 'agent',
+    injectionPolicy: 'agent',
+  };
+  // T-OPEN-42 契约写明注入「必须由人发起，LLM 输出不得直接触发」，插件侧用
+  // 权限码不进入 allowedScopes + INJECTION_WRITES 双保险落实。
+  // 这些操作今天不在目录里，因此第一层判定就是 deny——它连 geo_api 都调不到，
+  // 更不会被任何档位放行。
+  for (const operation of ['post_injection_tasks', 'post_injection_tasks_confirm', 'post_injection_tasks_cancel', 'post_injection_hosts_pair', 'post_injection_hosts_unpair']) {
+    const decision = await geoApprovalDecision({
+      name: 'geo_api',
+      arguments: { operation, projectId: '101', body: { version: 0 } },
+    }, next, catalog, allAgent);
+    assert.equal(decision.kind, 'deny', operation);
+  }
+  // 目录里的注入端点只剩两个只读查询：它们不应被档位影响。
+  for (const operation of ['get_injection_tasks', 'get_injection_hosts']) {
+    const read = await geoApprovalDecision({
+      name: 'geo_api',
+      arguments: { operation, projectId: '101' },
+    }, next, catalog, allAgent);
+    assert.equal(read.kind, 'allow', operation);
+  }
+  // 写入集合与目录实际状态必须一致：契约若把新的注入端点放出来，这里立刻报警，
+  // 而不是让它在没有人声明的状态下首次亮相。
+  const catalogInjection = Object.entries(catalog.operations)
+    .filter(([, operation]) => operation.path.startsWith('/injection-'))
+    .map(([name]) => name)
+    .sort();
+  assert.deepEqual(catalogInjection, ['get_injection_hosts', 'get_injection_tasks']);
+  // 白名单里的注入写入永远不出现；一旦契约侧放行权限码，这里失败并提醒补治理。
+  const injectionWrites = catalogInjection.filter(name => !name.startsWith('get_'));
+  assert.deepEqual(injectionWrites, []);
+  assert.equal(catalog.operations.post_injection_tasks, undefined);
 });
 
 test('plugin registers the generated API surface and restricts each agent to GEO tools', async () => {

@@ -44,6 +44,15 @@ test('operations map to workflow stages: catalog tag first, prefix fallback', ()
   assert.equal(stageOfOperation('post_customer_geo_reports', 'report'), 'report');
   assert.equal(stageOfOperation('post_agent_runs', 'agent'), 'report');
   assert.equal(stageOfOperation('put_projects_by_projectid', 'project'), 'project');
+  // T-OPEN-42 内容注入：业务阶段都是发布。契约今天只放行两个只读查询
+  // （get_injection_tasks 挂 publish tag、get_injection_hosts 挂 project tag），
+  // 前缀规则必须先于 tag 接管，否则 project tag 那条会落进「项目」阶段。
+  assert.equal(stageOfOperation('post_injection_tasks', 'publish'), 'publish');
+  assert.equal(stageOfOperation('post_injection_tasks_confirm', 'publish'), 'publish');
+  assert.equal(stageOfOperation('post_injection_tasks_cancel', 'publish'), 'publish');
+  assert.equal(stageOfOperation('get_injection_tasks', 'publish'), 'publish');
+  assert.equal(stageOfOperation('get_injection_hosts', 'project'), 'publish');
+  assert.equal(stageOfOperation('post_injection_hosts_pair', 'project'), 'publish');
   assert.equal(stageOfOperation('post_query_panels_by_panelid_freeze'), 'question');
   assert.equal(stageOfOperation('get_reports_stub'), 'report');
   assert.equal(stageOfOperation('not_in_catalog_op'), undefined);

@@ -87,6 +87,10 @@ const PREFIX_TO_STAGE = [
   ['detection', 'detect'],
   ['detect', 'detect'],
   ['fact', 'fact'],
+  // T-OPEN-42 内容注入：本机驱动器往客户平台账号填充内容，业务阶段属于发布。
+  // 契约把这些端点挂在 publish tag 下，但项目级的配对元数据挂在 project tag，
+  // 所以前缀规则必须先于 tag 接管（与 evidence 同理）。
+  ['injection', 'publish'],
   ['platform', 'project'],
   ['projects', 'project'],
   ['publish', 'publish'],
@@ -106,12 +110,17 @@ export function operationSubject(operationName) {
 /**
  * 把一个目录操作名映射到业务阶段；目录外的名字返回 undefined。
  * 优先用目录 tag（生成器保证与契约同步），前缀只作兜底；
- * evidence 前缀先于 tag 生效，因为契约把资料归在 fact tag 下。
+ * evidence 与 injection 的前缀先于 tag 生效——契约把资料归在 fact tag 下，
+ * 把注入任务挂在 publish tag、配对元数据挂在 project tag，而业务阶段上
+ * 它们分别是「资料」与「发布」。
  */
 export function stageOfOperation(operationName, tag) {
   const subject = operationSubject(operationName);
   if (subject === '') return undefined;
   if (subject.startsWith('evidence')) return 'evidence';
+  // injection：契约可能把它挂 publish tag（任务）或 project tag（配对元数据），
+  // 但业务阶段始终是发布，所以先于 tag 判定。
+  if (subject.startsWith('injection')) return 'publish';
   if (typeof tag === 'string' && TAG_TO_STAGE[tag] && STAGE_BY_KEY.has(TAG_TO_STAGE[tag])) {
     return TAG_TO_STAGE[tag];
   }

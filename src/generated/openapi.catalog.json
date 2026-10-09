@@ -2,7 +2,7 @@
   "catalogVersion": 2,
   "source": {
     "file": "scrm-specs/30-contracts/08-openapi.yaml",
-    "sha256": "03e47c6e16a891f071a78b968f26db4a275465938ab9a4c7c337e1fc0234be10"
+    "sha256": "d2fab6d270b61592e40951d86edc54d9a2e8aa74912b0a2048d772f90e6b0664"
   },
   "serverPath": "/geo",
   "securitySchemes": {
@@ -3879,6 +3879,103 @@
       "requestBody": null,
       "hasJsonResponse": true
     },
+    "get_injection_tasks": {
+      "name": "get_injection_tasks",
+      "method": "GET",
+      "path": "/injection-tasks",
+      "tag": "publish",
+      "summary": "内容注入任务列表",
+      "description": "T-OPEN-42：按项目 / 稿件 / 客户平台账号查询注入任务。**与 PublishRecord 是两套事实** —— 本域不欠预算、无外部订单号、无申诉与退款语义，不得与媒介代发互相换算或合并计数。文章工作台的分发矩阵用这个接口按 (articleVersionId, platformAccountId) 取状态。查看要求项目可见。",
+      "permission": "geo:project:view",
+      "idempotencyRule": null,
+      "parameters": [
+        {
+          "name": "projectId",
+          "in": "query",
+          "required": true,
+          "description": "",
+          "schema": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "style": "form",
+          "explode": true
+        },
+        {
+          "name": "articleVersionId",
+          "in": "query",
+          "required": false,
+          "description": "",
+          "schema": {
+            "type": "string",
+            "minLength": 1,
+            "description": "19 位稿件版本 ID；按字符串传递（同 PublishPreviewCreate），数字形式超出 JS 安全整数范围"
+          },
+          "style": "form",
+          "explode": true
+        },
+        {
+          "name": "platformAccountId",
+          "in": "query",
+          "required": false,
+          "description": "",
+          "schema": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "style": "form",
+          "explode": true
+        },
+        {
+          "name": "status",
+          "in": "query",
+          "required": false,
+          "description": "",
+          "schema": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "claimed",
+              "injected",
+              "confirmed",
+              "cancelled",
+              "failed"
+            ],
+            "description": "05 stateMachines.InjectionTask"
+          },
+          "style": "form",
+          "explode": true
+        }
+      ],
+      "requestBody": null,
+      "hasJsonResponse": true
+    },
+    "get_injection_hosts": {
+      "name": "get_injection_hosts",
+      "method": "GET",
+      "path": "/injection-hosts",
+      "tag": "project",
+      "summary": "本项目的已配对主机列表",
+      "description": "T-OPEN-42 §6.3：列出为当前项目登记过的注入执行主机。**不含任何登录态字段** —— GEO 没有渠道知道那台机器上登录了没有；`lastSeenAt` 只说明驱动器最近调用过，不代表平台登录态有效。查看要求项目可见。",
+      "permission": "geo:project:view",
+      "idempotencyRule": null,
+      "parameters": [
+        {
+          "name": "projectId",
+          "in": "query",
+          "required": true,
+          "description": "",
+          "schema": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "style": "form",
+          "explode": true
+        }
+      ],
+      "requestBody": null,
+      "hasJsonResponse": true
+    },
     "get_media_favorites": {
       "name": "get_media_favorites",
       "method": "GET",
@@ -6528,6 +6625,20 @@
           ],
           "description": "项目阶段，人工判断；空表示未指定，行为与改造前一致。必须与 brandMode 匹配：baseline→neutral/include_own_brand，expand→include_own_brand，convert→competitive。非空时服务端会在品牌上下文中额外注入「我方定义」段（来源：项目绑定的已确认且公开事实，条数与字符受 geo.question.brand-context-fact-limit / brand-context-fact-chars 约束）"
         },
+        "questionStyle": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "generic_need",
+            "precise_need",
+            "local_channel",
+            "scenario_long_tail",
+            "decision_compare",
+            "brand_direct"
+          ],
+          "default": "auto",
+          "description": "问题风格（意图分层），人工判断；服务端不推断、不落独立列，仅写入 input_snapshot.questionStyle。每档自带允许意图集合与品牌要求：服务端据此收窄本次轮换的意图（smart 直接取该集合，custom 取交集），再与所选阶段的 allowedIntents 取交集，任一交集为空即以 field=questionStyle 拒绝；并只注入选中那一档的形态段。一致性约束（field=questionStyle）：generic_need 只允许 brandMode=neutral 且不得与 autoSplitStages=true 同用；brand_direct 只允许 include_own_brand 且与 projectStage=baseline 互斥。auto 为缺省，行为与改造前逐字一致；未知值拒绝，不静默回退"
+        },
         "seeds": {
           "type": "array",
           "maxItems": 50,
@@ -8878,6 +8989,48 @@
       "method": "DELETE",
       "path": "/platform-accounts",
       "summary": "解除客户平台账号绑定",
+      "reason": "该权限不在 07.projectApiTokens.allowedScopes 中"
+    },
+    {
+      "method": "POST",
+      "path": "/injection-tasks",
+      "summary": "发起内容注入",
+      "reason": "该权限不在 07.projectApiTokens.allowedScopes 中"
+    },
+    {
+      "method": "POST",
+      "path": "/injection-tasks/confirm",
+      "summary": "声明已自行在该平台发布",
+      "reason": "该权限不在 07.projectApiTokens.allowedScopes 中"
+    },
+    {
+      "method": "POST",
+      "path": "/injection-tasks/cancel",
+      "summary": "取消内容注入任务",
+      "reason": "该权限不在 07.projectApiTokens.allowedScopes 中"
+    },
+    {
+      "method": "GET",
+      "path": "/injection-assist/tasks",
+      "summary": "本机驱动器取待注入任务",
+      "reason": "OpenAPI 未允许 GEO 项目令牌认证"
+    },
+    {
+      "method": "POST",
+      "path": "/injection-assist/tasks/{taskId}/report",
+      "summary": "本机驱动器上报注入结果",
+      "reason": "OpenAPI 未允许 GEO 项目令牌认证"
+    },
+    {
+      "method": "POST",
+      "path": "/injection-hosts/pair",
+      "summary": "本机配对（每台主机一次）",
+      "reason": "该权限不在 07.projectApiTokens.allowedScopes 中"
+    },
+    {
+      "method": "POST",
+      "path": "/injection-hosts/unpair",
+      "summary": "解除本机配对",
       "reason": "该权限不在 07.projectApiTokens.allowedScopes 中"
     },
     {

@@ -6,7 +6,9 @@
 - `capability-map.md` 是同一生成器写出的全量人读覆盖清单，包括工具名、方法、路由、权限、幂等约束和未暴露端点。
 - 两者的源文件都是 `scrm-specs/30-contracts/08-openapi.yaml`。不要手改生成目录，也不要在 Skill 中另抄请求 schema。
 
-当前快照（2026-10-07 实测）：源 `scrm-specs/30-contracts/08-openapi.yaml` SHA-256 为 `03e47c6e16a891f071a78b968f26db4a275465938ab9a4c7c337e1fc0234be10`，生成的 `openapi.catalog.json` SHA-256 为 `7e870a1603df6a481fb634ed86c9ae4d071560bdc0518ff2f7467d1038f7d0e8`；筛选覆盖 151 个操作，排除 61 个。除 OpenAPI 外，纳入范围还受 `scripts/generate-catalog.mjs` 的路径与权限过滤策略约束；该策略排除 `geo:collector:account:admin`、`geo:project:archive`、`geo:project:restore`、`geo:project:delete`、`geo:content:delete`、`geo:channel:manage`、`geo:budget:release`、`geo:audit:view` 和 `geo:audit:export`。对应目录边界由插件测试覆盖。校验成功只证明生成物和这份 OpenAPI 文件及当前筛选策略相同，不证明线上后端实现一致或用户权限有效。
+当前快照（2026-10-09 实测）：源 `scrm-specs/30-contracts/08-openapi.yaml` SHA-256 为 `d2fab6d270b61592e40951d86edc54d9a2e8aa74912b0a2048d772f90e6b0664`，生成的 `openapi.catalog.json` SHA-256 为 `74b417c9ba197b927cfa6de38d050c63dc4b9d4b486d36028eefedb58d0d5c0c`；筛选覆盖 153 个操作，排除 68 个。除 OpenAPI 外，纳入范围还受 `scripts/generate-catalog.mjs` 的路径与权限过滤策略约束；该策略排除 `geo:collector:account:admin`、`geo:project:archive`、`geo:project:restore`、`geo:project:delete`、`geo:content:delete`、`geo:channel:manage`、`geo:budget:release`、`geo:audit:view` 和 `geo:audit:export`。**注意 T-OPEN-42 内容注入：`07.projectApiTokens.allowedScopes` 刻意不含 `geo:injection:*`（契约 N-10 要求注入必须由人发起），因此 `/injection-*` 的写接口出现在「未暴露端点」表里是设计如此，不是过滤失误。**对应目录边界由插件测试覆盖。校验成功只证明生成物和这份 OpenAPI 文件及当前筛选策略相同，不证明线上后端实现一致或用户权限有效。
+
+生成器会写两份 `capability-map.md`：一次给 skill 仓库（`../geo-workflow/references/`），一次给随包分发的副本（`sources/geo-workflow/references/`）。只有前者的话，已发布的插件会装出一份过期目录，而 `install-skill.mjs` 优先读包内那份。
 
 ## 哪些内容由人维护
 

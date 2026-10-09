@@ -35,6 +35,25 @@ test('本地契约校验的报错被翻成人话，而不是原样透出', () =>
   assert.match(page, /提交内容与系统要求不符/, '要有对应的中文说法');
 });
 
+test('skill 如实写清内容注入只由人发起，工具侧只剩只读', () => {
+  // T-OPEN-42：契约 N-10 明令注入必须由人发起。skill 是 agent 唯一的业务规程，
+  // 这里必须把「写接口不在工具目录里」写成设计，否则 agent 会把它当缺陷去绕。
+  const skill = read('sources/geo-workflow/SKILL.md')
+  assert.match(skill, /内容注入写入（T-OPEN-42）不在工具目录里/, 'SKILL 必须点明注入写入不开放');
+  assert.match(skill, /契约要求注入必须由人发起/, '必须给出原因');
+
+  const workflow = read('sources/geo-workflow/references/workflow.md')
+  assert.match(workflow, /内容注入（T-OPEN-42/, 'workflow 需要有注入小节');
+  assert.match(workflow, /get_injection_tasks/, '只读查询要写明');
+  assert.match(workflow, /平台已发布/, '状态口径必须钉住');
+
+  // 随包副本与 skill 仓库副本必须一致：install-skill.mjs 优先读包内那份，
+  // 只改一边会让装出来的 skill 与开发用的 skill 结论相反。
+  const packaged = read('sources/geo-workflow/references/maintenance.md')
+  assert.match(packaged, /08-openapi\.yaml` SHA-256 为 `d2fab6d2/, '快照基线要跟着契约更新');
+  assert.match(packaged, /projectApiTokens\.allowedScopes` 刻意不含 `geo:injection:\*`/, '生成器侧的原因要随包说明');
+});
+
 test('随包分发的 skill 明确禁止向运营员提出技术方案', () => {
   const skill = read('sources/geo-workflow/SKILL.md')
   assert.match(skill, /撞到系统侧缺陷时怎么汇报/, '该章节必须随包分发');

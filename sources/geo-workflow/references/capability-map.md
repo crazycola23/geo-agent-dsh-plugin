@@ -1,10 +1,10 @@
 # GEO 工具覆盖目录（自动生成）
 
-OpenAPI SHA-256：`03e47c6e16a891f071a78b968f26db4a275465938ab9a4c7c337e1fc0234be10`
+OpenAPI SHA-256：`d2fab6d270b61592e40951d86edc54d9a2e8aa74912b0a2048d772f90e6b0664`
 
 端点来自 `scrm-specs/30-contracts/08-openapi.yaml`。修改该契约后，在插件目录执行 `npm run generate:catalog`；不要手改下列清单或 `src/generated/openapi.catalog.json`。生成器会验证路由名冲突与请求体引用。
 
-当前纳入 151 个操作，排除 61 个操作。GET 只读；其余请求必须通过 DSH 操作员审批后才发出。所有后端权限仍由 GEO 校验。
+当前纳入 153 个操作，排除 68 个操作。GET 只读；其余请求必须通过 DSH 操作员审批后才发出。所有后端权限仍由 GEO 校验。
 
 ## agent（4）
 
@@ -38,7 +38,7 @@ OpenAPI SHA-256：`03e47c6e16a891f071a78b968f26db4a275465938ab9a4c7c337e1fc0234b
 | post_questions_by_id_transition | POST | /questions/{id}/transition | geo:question:enable | required: Question + transition + version；24h 传输重放不重复推进状态或追加审计 | 问题状态迁移（批准/暂停/恢复/退役/丢弃） |
 | get_strategy_snapshots_by_id | GET | /strategy-snapshots/{id} | geo:question:view | — | 策略快照（M06） |
 
-## project（11）
+## project（12）
 
 | 工具操作名 | 方法 | 路由 | 业务权限 | 幂等约束 | 描述 |
 |---|---|---|---|---|---|
@@ -53,6 +53,7 @@ OpenAPI SHA-256：`03e47c6e16a891f071a78b968f26db4a275465938ab9a4c7c337e1fc0234b
 | get_customers | GET | /customers | geo:project:create | — | 客户选择器（M01） |
 | get_platforms | GET | /platforms | geo:project:view | — | 检测平台选择器（M01 重点平台） |
 | get_platform_accounts | GET | /platform-accounts | geo:project:view | — | 项目绑定的客户平台账号列表 |
+| get_injection_hosts | GET | /injection-hosts | geo:project:view | — | 本项目的已配对主机列表 |
 
 ## fact（25）
 
@@ -117,7 +118,7 @@ OpenAPI SHA-256：`03e47c6e16a891f071a78b968f26db4a275465938ab9a4c7c337e1fc0234b
 | get_article_versions_by_id_draft | GET | /article-versions/{id}/draft | geo:content:view | — | 读取我的稿件草稿 |
 | delete_article_versions_by_id_draft | DELETE | /article-versions/{id}/draft | geo:content:create | — | 丢弃我的稿件草稿 |
 
-## publish（17）
+## publish（18）
 
 | 工具操作名 | 方法 | 路由 | 业务权限 | 幂等约束 | 描述 |
 |---|---|---|---|---|---|
@@ -125,6 +126,7 @@ OpenAPI SHA-256：`03e47c6e16a891f071a78b968f26db4a275465938ab9a4c7c337e1fc0234b
 | get_publish_resources | GET | /publish-resources | geo:publish:view | — | Provider 媒体资源目录（只读） |
 | get_media_catalog_resources | GET | /media-catalog/resources | geo:publish:view | — | 当前 Provider 本地媒体目录（只读） |
 | get_media_catalog_capabilities | GET | /media-catalog/capabilities | geo:publish:view | — | 当前 Provider 本地媒体目录能力（只读） |
+| get_injection_tasks | GET | /injection-tasks | geo:project:view | — | 内容注入任务列表 |
 | get_media_favorites | GET | /media-favorites | geo:publish:view | — | 我的媒体收藏列表（按项目隔离） |
 | post_media_favorites | POST | /media-favorites | geo:publish:confirm | — | 收藏媒体 |
 | delete_media_favorites | DELETE | /media-favorites | geo:publish:confirm | — | 取消媒体收藏 |
@@ -242,6 +244,13 @@ OpenAPI SHA-256：`03e47c6e16a891f071a78b968f26db4a275465938ab9a4c7c337e1fc0234b
 | POST | /platform-accounts | 该权限不在 07.projectApiTokens.allowedScopes 中 |
 | PUT | /platform-accounts | 该权限不在 07.projectApiTokens.allowedScopes 中 |
 | DELETE | /platform-accounts | 该权限不在 07.projectApiTokens.allowedScopes 中 |
+| POST | /injection-tasks | 该权限不在 07.projectApiTokens.allowedScopes 中 |
+| POST | /injection-tasks/confirm | 该权限不在 07.projectApiTokens.allowedScopes 中 |
+| POST | /injection-tasks/cancel | 该权限不在 07.projectApiTokens.allowedScopes 中 |
+| GET | /injection-assist/tasks | OpenAPI 未允许 GEO 项目令牌认证 |
+| POST | /injection-assist/tasks/{taskId}/report | OpenAPI 未允许 GEO 项目令牌认证 |
+| POST | /injection-hosts/pair | 该权限不在 07.projectApiTokens.allowedScopes 中 |
+| POST | /injection-hosts/unpair | 该权限不在 07.projectApiTokens.allowedScopes 中 |
 | POST | /platform-accounts/default | 该权限不在 07.projectApiTokens.allowedScopes 中 |
 | POST | /platform-accounts/launch | 该权限不在 07.projectApiTokens.allowedScopes 中 |
 | POST | /publish/callback/{providerCode} | 该路径段 callback 在 07.projectApiTokens.excludedPathSegments 中排除 |

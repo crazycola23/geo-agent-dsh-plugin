@@ -96,7 +96,22 @@ const POLICY_DOMAINS = {
     'post_report_revisions_by_id_return',
     'post_report_revisions_by_id_artifacts_render',
   ]),
+  // 内容注入（T-OPEN-42）：把稿件内容写进客户自己的平台账号。它已经出了
+  // 平台边界，后果由客户承担，所以刻意**不收进任何可委派域**——只读查询
+  // 放行，写入一律走人工（见下面 INJECTION_WRITES 的判定）。
+  injectionPolicy: new Set(),
 };
+// T-OPEN-42 内容注入域的写入。契约明确写了「必须由人发起，LLM 输出不得直接
+// 触发本接口」，因此这些操作永远弹人工审批，任何档位都不能把它们放走。
+// 收在这里而不是 HARD_ASK_WRITES：HARD_ASK 是「花钱 / 对外发布」，
+// 注入是「改客户账号里的内容」，语义不同、提示文案也不同。
+const INJECTION_WRITES = new Set([
+  'post_injection_tasks',
+  'post_injection_tasks_confirm',
+  'post_injection_tasks_cancel',
+  'post_injection_hosts_pair',
+  'post_injection_hosts_unpair',
+]);
 // 会花钱或对外发布的写入。先于任何档位判断，这样将来改动域划分也不会
 // 悄悄把它们包进去。
 const HARD_ASK_WRITES = new Set([
@@ -166,14 +181,25 @@ export async function geoApprovalDecision(execution, next, apiCatalog = catalog,
   if (SIDE_EFFECT_FREE_WRITES.has(operationName)) return next();
   // 红线：花钱和对外发布的写入永远保留人工审批，不受任何档位设置影响。
   const delegated = !HARD_ASK_WRITES.has(operationName)
+    && !INJECTION_WRITES.has(operationName)
     && Object.entries(POLICY_DOMAINS).some(([policyKey, operations]) => operations.has(operationName) && settings?.[policyKey] === 'agent');
   if (delegated) return next();
   const actionSummary = approvalArgumentSummary(execution.arguments);
-  const prompt = `请审批 GEO 写操作 ${operation.method} ${operation.path}（${operation.summary}）。关键参数：${actionSummary}。服务端仍会校验权限。`;
+  // 注入类写入要说清它是「往客户平台账号里放内容」，不是普通内容操作。
+  const prompt = INJECTION_WRITES.has(operationName)
+    ? `请审批内容注入 ${operation.method} ${operation.path}（${operation.summary}）。这一步会把稿件内容写进客户自己的平台账号，且按契约必须由您本人发起。关键参数：${actionSummary}。服务端仍会校验权限。`
+    : `请审批 GEO 写操作 ${operation.method} ${operation.path}（${operation.summary}）。关键参数：${actionSummary}。服务端仍会校验权限。`;
   return {
     kind: 'ask',
-    reason: `GEO 写操作需要操作员明确批准：${operation.name}`,
-    displayReason: { en: `Approve GEO ${operation.method} ${operation.path} (${operation.name}). Key arguments: ${actionSummary}. GEO still enforces authorization.`, zh_CN: prompt },
+    reason: INJECTION_WRITES.has(operationName)
+      ? `GEO 内容注入必须由操作员本人发起：${operation.name}`
+      : `GEO 写操作需要操作员明确批准：${operation.name}`,
+    displayReason: {
+      en: INJECTION_WRITES.has(operationName)
+        ? `Approve content injection ${operation.method} ${operation.path}. This writes article content into the customer's own platform account and, per contract, must be started by you. Key arguments: ${actionSummary}. GEO still enforces authorization.`
+        : `Approve GEO ${operation.method} ${operation.path} (${operation.name}). Key arguments: ${actionSummary}. GEO still enforces authorization.`,
+      zh_CN: prompt,
+    },
   };
 }
 
@@ -423,7 +449,7 @@ export function apply(ctx, config = {}) {
 
   ctx.tools.register(defineGeoTool({
     name: 'geo_approval_policy',
-    description: '读取本插件的审批配置（不发网络请求）：每个业务域的写入档位——ask 表示该域每次写入都会先弹 DSH 操作员审批，agent 表示由智能体自行判断执行——以及每个域覆盖的具体操作、无论档位如何都必须人工审批的写入（发布确认类、资料上传）、始终放行的查询型写入，还有工具隔离状态。跑单进入执行阶段之前先读它，决策单才能标注哪些已批准项仍会弹审批。',
+    description: '读取本插件的审批配置（不发网络请求）：每个业务域的写入档位——ask 表示该域每次写入都会先弹 DSH 操作员审批，agent 表示由智能体自行判断执行——以及每个域覆盖的具体操作、无论档位如何都必须人工审批的写入（发布确认类、内容注入、资料上传）、始终放行的查询型写入，还有工具隔离状态。跑单进入执行阶段之前先读它，决策单才能标注哪些已批准项仍会弹审批。',
     parameters: {},
     async execute() {
       const settings = currentSettings();
@@ -438,10 +464,13 @@ export function apply(ctx, config = {}) {
           operations: [...operations].sort(),
         })),
         hardAskAlways: [...HARD_ASK_WRITES].sort(),
+        // 内容注入（T-OPEN-42）：契约要求必须由人发起，因此它不可委派、也不收进
+        // 任何域——写在这里让决策单能如实标注，而不是让 agent 以为有档位可调。
+        injectionAlwaysAsk: [...INJECTION_WRITES].sort(),
         evidenceUpload: 'geo_upload_evidence 每次派发之前都需要操作员明确批准',
         alwaysAllowedQueryPosts: [...SIDE_EFFECT_FREE_WRITES].sort(),
         restrictTools: settings.restrictTools !== false,
-        note: 'ask = 每次写入都弹 DSH 审批；agent = 由智能体自行判断；其它取值一律按 ask 处理。改档位请到 GEO 工作台的设置卡「运行」标签，不能用工具改。',
+        note: 'ask = 每次写入都弹 DSH 审批；agent = 由智能体自行判断；其它取值一律按 ask 处理。改档位请到 GEO 工作台的设置卡「运行」标签，不能用工具改。内容注入写入始终由人工发起（见 injectionAlwaysAsk）。',
       };
     },
   }));

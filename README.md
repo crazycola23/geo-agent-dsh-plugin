@@ -85,7 +85,7 @@ Install this package in an isolated DSH profile, then fill in the GEO service ad
 
 - `geo_api`: call one exact operation from the generated GEO OpenAPI catalog. Supply the target `projectId`; the plugin uses that project's API token and rejects requests whose path/query/body project ID differs. The selector is not added to the business request. The plugin validates path/query/body fields and refuses arbitrary hosts, headers, or undeclared fields.
 - `geo_describe_operation`: inspect the current generated method, route, request schema, permission, and idempotency rule.
-- `geo_approval_policy`: read this plugin approval configuration (no network call) — per-domain write policy (ask = DSH approval per write, agent = agent judgment), the operations each domain covers, writes that always require approval (publish confirm-class, evidence upload), always-allowed query POSTs, and tool isolation state. Changing policies happens in the settings card, never through tools.
+- `geo_approval_policy`: read this plugin approval configuration (no network call) — per-domain write policy (ask = DSH approval per write, agent = agent judgment), the operations each domain covers, writes that always require approval (publish confirm-class, evidence upload, content injection), always-allowed query POSTs, and tool isolation state. Changing policies happens in the settings card, never through tools.
 - `geo_list_evidence_files`: list allowed evidence file names and sizes from the configured staging folder; it never reads or returns their contents.
 - `geo_upload_evidence`: upload one direct-child `.doc`, `.docx`, `.pdf`, or `.txt` file to the canonical multipart route. Absolute paths, traversal, symbolic links, and unsupported extensions are rejected.
 - `geo_connection_status`: test one selected project's API token and report its bound project, token name, scopes and expiry without revealing the bearer.
@@ -100,9 +100,11 @@ The plugin never retries automatically. It returns `outcome: unknown` with the o
 
 Image/video file upload uses the separate Resource/OSS path and is outside this GEO OpenAPI plugin. Existing project media can be listed or bound through contracted GEO operations; new media must be uploaded in the GEO UI for this version.
 
+Content injection (T-OPEN-42, added to the contract on 2026-10-08) writes article content into the customer's own platform account and the contract requires it to be started by a human. The plugin therefore exposes only the two read queries of that domain — `get_injection_tasks` and `get_injection_hosts` — while `geo:injection:*` stays out of `projectApiTokens.allowedScopes` and the listing endpoints appear in the generated coverage map's "not exposed" table by design. Injection state means content reached the platform editor, never that the platform published it.
+
 ## OpenAPI generation and tests
 
-`src/generated/openapi.catalog.json` and `../geo-workflow/references/capability-map.md` are generated from `../scrm-specs/30-contracts/08-openapi.yaml`. The value is `catalog.source.sha256`, which is the hash of the **OpenAPI spec**, not of the catalog file. Current SHA-256: `6b7e1a2d785a7b337f4e0b967a64903981bc9e0574e9687580de874fa020a464`. Run `npm run validate` to detect a spec change the catalog has not absorbed yet.
+`src/generated/openapi.catalog.json` and `../geo-workflow/references/capability-map.md` are generated from `../scrm-specs/30-contracts/08-openapi.yaml`. The value is `catalog.source.sha256`, which is the hash of the **OpenAPI spec**, not of the catalog file. Current SHA-256: `d2fab6d270b61592e40951d86edc54d9a2e8aa74912b0a2048d772f90e6b0664`. Run `npm run validate` to detect a spec change the catalog has not absorbed yet. Generation rewrites both the Skill capability map and the copy packaged in `sources/geo-workflow/` — the packaged copy is what an installed plugin ships, so updating only one leaves two different maps in play.
 
 ```powershell
 npm ci --ignore-scripts

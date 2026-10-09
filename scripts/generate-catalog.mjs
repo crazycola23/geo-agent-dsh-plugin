@@ -10,6 +10,11 @@ const defaultSpec = resolve(repoRoot, '..', 'scrm-specs', '30-contracts', '08-op
 const defaultPermissionPolicy = resolve(repoRoot, '..', 'scrm-specs', '30-contracts', '07-权限码与路由清单.yaml');
 const defaultCatalog = resolve(repoRoot, 'src', 'generated', 'openapi.catalog.json');
 const defaultCoverage = resolve(repoRoot, '..', 'geo-workflow', 'references', 'capability-map.md');
+// 包内随包分发的那份 skill 副本（sources/geo-workflow）也必须拿到同一份生成物：
+// install-skill.mjs 解析 skill 源码时**优先**看 sources/geo-workflow，只写
+// ../geo-workflow 会让已发布的插件装出一份过期目录——封面是操作数与排除原因，
+// 运营员读它做决策，过期等于误导。
+const defaultPackagedCoverage = resolve(repoRoot, 'sources', 'geo-workflow', 'references', 'capability-map.md');
 
 function pointer(document, ref) {
   if (!ref.startsWith('#/')) throw new Error(`External OpenAPI ref is unsupported: ${ref}`);
@@ -243,7 +248,8 @@ function markdown(catalog) {
 const specPath = resolve(process.argv[2] || defaultSpec);
 const catalogPath = resolve(process.argv[3] || defaultCatalog);
 const coveragePath = resolve(process.argv[4] || defaultCoverage);
-const permissionPolicyPath = resolve(process.argv[5] || defaultPermissionPolicy);
+const packagedCoveragePath = resolve(process.argv[5] || defaultPackagedCoverage);
+const permissionPolicyPath = resolve(process.argv[6] || defaultPermissionPolicy);
 const specText = await readFile(specPath, 'utf8');
 const permissionPolicyText = await readFile(permissionPolicyPath, 'utf8');
 const document = yaml.load(specText);
@@ -252,7 +258,9 @@ if (!document?.openapi?.startsWith('3.')) throw new Error('Expected an OpenAPI 3
 const catalog = generate(document, specText, permissionPolicy.projectApiTokens);
 await mkdir(dirname(catalogPath), { recursive: true });
 await mkdir(dirname(coveragePath), { recursive: true });
+await mkdir(dirname(packagedCoveragePath), { recursive: true });
 await writeFile(catalogPath, `${JSON.stringify(catalog, null, 2)}\n`, 'utf8');
 await writeFile(coveragePath, markdown(catalog), 'utf8');
+await writeFile(packagedCoveragePath, markdown(catalog), 'utf8');
 console.log(`Generated ${Object.keys(catalog.operations).length} GEO operations; excluded ${catalog.excluded.length}.`);
 console.log(`OpenAPI SHA-256 ${catalog.source.sha256}`);
