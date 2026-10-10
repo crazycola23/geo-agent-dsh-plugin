@@ -274,7 +274,12 @@ export function foldApprovalDecided(state, { callId, outcome }) {
   const stageKey = stageKeyOfCallId(state, callId);
   if (stageKey === undefined) return state;
   const stage = state.stages[stageKey];
-  const denied = outcome === 'rejected' || outcome === 'unavailable';
+  // cancelled：操作员主动收回这次审批。它和 rejected 一样是**确定的未执行**，
+  // 必须同落 failed——漏掉它会让阶段停在 unknown，界面提示运营员去核对一条
+  // 从未发出的 GEO 记录（2026-10-10 审计：宿主枚举为 allowed-once|rejected|
+  // cancelled|unavailable，这里原先只认后两者）。
+  const cancelled = outcome === 'cancelled';
+  const denied = outcome === 'rejected' || outcome === 'unavailable' || cancelled;
   if (!stage.awaitingApproval && !denied) return state;
   return {
     ...state,
@@ -283,7 +288,7 @@ export function foldApprovalDecided(state, { callId, outcome }) {
       [stageKey]: {
         ...stage,
         awaitingApproval: false,
-        ...(denied ? { outcome: 'rejected', rejectionReason: '人工审批未通过' } : {}),
+        ...(denied ? { outcome: 'rejected', rejectionReason: cancelled ? '人工取消了这次审批' : '人工审批未通过' } : {}),
       },
     },
   };

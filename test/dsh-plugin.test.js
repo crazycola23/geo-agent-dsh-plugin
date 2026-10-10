@@ -230,7 +230,11 @@ test('plugin registers the generated API surface and restricts each agent to GEO
   assert.match(warnings[0], /工具隔离已生效/);
   assert.match(warnings[0], /restrictTools/);
   assert.deepEqual(registered.map(tool => tool.name), ['geo_api', 'geo_describe_operation', 'geo_list_evidence_files', 'geo_upload_evidence', 'geo_export_article', 'geo_progress_note', 'geo_clear_progress', 'geo_connection_status', 'geo_approval_policy']);
-  const expectedRestriction = { allow: ['geo_api', 'geo_describe_operation', 'geo_list_evidence_files', 'geo_upload_evidence', 'geo_export_article', 'geo_progress_note', 'geo_clear_progress', 'geo_connection_status', 'geo_approval_policy', 'ask_user_question', 'schedule_create', 'schedule_list', 'schedule_update', 'schedule_delete'] };
+  // schedule_* 不在清单里：dsh-schedule 把它们注册在每个 agent 自己的作用域，
+  // 而 restrict() 的 allow 只接受 inherited/global 工具名，写进去会抛
+  // "names unknown global tools" 并把宿主拖死（2026-10-09 实测崩溃的根因）。
+  // 隔离只过滤 inherited 面，agent 自己的注册不受影响，所以不列也照样可用。
+  const expectedRestriction = { allow: ['geo_api', 'geo_describe_operation', 'geo_list_evidence_files', 'geo_upload_evidence', 'geo_export_article', 'geo_progress_note', 'geo_clear_progress', 'geo_connection_status', 'geo_approval_policy', 'ask_user_question'] };
   assert.deepEqual(existing.state.restriction, expectedRestriction);
   assert.equal(events.has('tools/pre-execute'), true);
   assert.equal(events.has('agent/created'), true);

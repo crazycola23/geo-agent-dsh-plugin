@@ -17,9 +17,16 @@ const operationNames = Object.keys(catalog.operations).sort();
 // 它不被一起屏蔽——智能体向人提问（带候选项）依赖它。
 // geo_progress_note 同理属于本插件自己的工具，漏列会让它在隔离打开时被屏蔽，
 // 进度页的说明区就永远空着（dsh-plugin.test.js 对这份清单有精确断言）。
-// schedule_* 也是 DSH 自带能力，同样必须放行：GEO 的内容生成 / 检测执行是异步
-// 长任务（实测同类内容生成 2.5–6 分钟），正确做法是提交后挂一个定时回查再回来，
-// 而不是原地阻塞轮询——隔离一旦把它挡掉，这个等待方式就没法用了。
+//
+// ⚠ schedule_* 刻意不在这份清单里。它们由 @deepseek-ai/dsh-schedule 用
+//   registerScheduleTools(rootCtx, agent.ctx, agent) 注册在**每个 agent 自己的
+//   作用域**，不是全局工具；而 ctx.tools.restrict() 的名字只从 inherited /
+//   global 层收集（dsh-tools 的 view().restrictableNames），把 scope-local
+//   名字写进 allow 会直接抛 "names unknown global tools"。
+//   而且隔离只过滤 inherited 面，agent 自己的注册天然不被过滤（见
+//   dsh-tools/lib/index.js 的 view()：own 层的注册无条件进 visible），
+//   所以这里不列 schedule_*，它们在隔离打开时照样可用——这正是 GEO 长任务
+//   要的「提交后挂定时回查」。
 const toolNames = [
   'geo_api',
   'geo_describe_operation',
@@ -31,10 +38,6 @@ const toolNames = [
   'geo_connection_status',
   'geo_approval_policy',
   'ask_user_question',
-  'schedule_create',
-  'schedule_list',
-  'schedule_update',
-  'schedule_delete',
 ];
 // 写入委派域。每个键对应一个设置项（ask 保持人工审批，显式填 agent 才把该域的
 // 写入交给智能体自行判断）。默认不放行：不属于任何域的操作照旧弹审批。
@@ -530,6 +533,10 @@ export function apply(ctx, config = {}) {
         if (event.seq < state.inheritedEventCount) return state;
         return projectEvent(state, event, {
           tagOf: operation => catalog.operations[operation]?.tag,
+          // 审批层把报价预览这类查询型 POST 视作「无副作用的写入」直接放行，
+          // 但投影层必须继续按写处理：预览被拒（如所选媒体未通过准入）是运营员
+          // 必须看到的结果，projection-registration.test.js 对这条有回归断言。
+          // 两层判定不同是**有意**的，别为了「一致」把它们合并。
           isWrite: operation => isWriteOperation(catalog, operation),
         });
       },
@@ -583,7 +590,13 @@ export function apply(ctx, config = {}) {
     const dispose = restrictions.get(agent);
     if (dispose === undefined) return;
     restrictions.delete(agent);
-    void dispose();
+    // 先摘账、再解除：解除抛错也会被兜住，坏 effect 不会拖死宿主，也不会
+    // 挡住后续收敛（关态收敛要逐个走这里）。
+    try {
+      void dispose();
+    } catch (error) {
+      console.warn(`[geo-agent-dsh-plugin] 解除某个智能体的工具隔离失败，已跳过：${error?.message ?? error}`);
+    }
   };
   const restrictAgent = (agent) => {
     // 关掉开关必须解除「已经被限制」的智能体，而不只是不再限制新来的——
@@ -592,11 +605,19 @@ export function apply(ctx, config = {}) {
       releaseAgent(agent);
       return;
     }
+    // 已经在本插件手里挂着限制的智能体不再重复 restrict：重复调用会在
+    // restrictions 上叠第二层 effect，dispose 只解一层，限制就再也不消失。
     if (restrictions.has(agent)) return;
     if (typeof agent?.ctx?.tools?.restrict !== 'function' || typeof agent.ctx.effect !== 'function') {
       throw new Error('GEO 插件需要按智能体作用域的工具限制能力');
     }
-    restrictions.set(agent, ctx.effect(() => agent.ctx.effect(() => agent.ctx.tools.restrict({ allow: toolNames }))));
+    // restrict() 抛错会把宿主整个拖死（dsh 记 fatal uncaught exception 后退出），
+    // 而隔离只是「少几个工具」的降级功能，不值得让宿主陪葬：失败就降级为不隔离。
+    try {
+      restrictions.set(agent, ctx.effect(() => agent.ctx.effect(() => agent.ctx.tools.restrict({ allow: toolNames }))));
+    } catch (error) {
+      console.warn(`[geo-agent-dsh-plugin] 对智能体施加工具隔离失败，已降级为不隔离：${error?.message ?? error}`);
+    }
   };
   /** 对全部智能体做一次收敛，这样设置卡上的开关不用重启就能生效。 */
   const reconcileAgents = () => {
@@ -618,6 +639,13 @@ export function apply(ctx, config = {}) {
   // 隔离开关的即时收敛。volatile 配置没有变更事件、也不会重启 fiber，
   // 只能用轻量签名轮询（2 秒读一个布尔，无变化即空转）把切换同步给
   // 已经存在的智能体；新建/销毁智能体仍走上面的生命周期钩子。
+  //
+  // ⚠ 关态也必须收敛。关闭隔离走的正是这条轮询：reconcileAgents 在关态下
+  // 落到 releaseAgent，而那是解除隔离的唯一路径。此前在这里加过一句
+  // 「关态直接 return」，结果是「开得起来、关不下去」——打开后关闭开关，
+  // 智能体仍只能看见 GEO 工具，必须重启 DSH 才恢复（2026-10-10 审计复现）。
+  // 当初要躲的风险是「dispose 失败留下坏 effect 被二次踩」，现在改由
+  // releaseAgent 内部 try/catch 兜住，而不是靠关态空转来回避。
   let appliedRestriction = restrictToolsEnabled();
   ctx.effect(() => {
     const timer = setInterval(() => {
@@ -629,5 +657,5 @@ export function apply(ctx, config = {}) {
     // unref：轮询不阻塞进程退出（测试与无头场景都需要）。
     timer.unref?.();
     return () => clearInterval(timer);
-  }, 'geo-workbench: isolation convergence poll');
+  }, 'geo-workflow: isolation convergence poll');
 }
