@@ -86,9 +86,11 @@ Install this package in an isolated DSH profile, then fill in the GEO service ad
 - `geo_api`: call one exact operation from the generated GEO OpenAPI catalog. Supply the target `projectId`; the plugin uses that project's API token and rejects requests whose path/query/body project ID differs. The selector is not added to the business request. The plugin validates path/query/body fields and refuses arbitrary hosts, headers, or undeclared fields.
 - `geo_describe_operation`: inspect the current generated method, route, request schema, permission, and idempotency rule.
 - `geo_approval_policy`: read this plugin approval configuration (no network call) — per-domain write policy (ask = DSH approval per write, agent = agent judgment), the operations each domain covers, writes that always require approval (publish confirm-class, evidence upload, content injection), always-allowed query POSTs, and tool isolation state. Changing policies happens in the settings card, never through tools.
-- `geo_list_evidence_files`: list allowed evidence file names and sizes from the configured staging folder; it never reads or returns their contents.
-- `geo_upload_evidence`: upload one direct-child `.doc`, `.docx`, `.pdf`, or `.txt` file to the canonical multipart route. Absolute paths, traversal, symbolic links, and unsupported extensions are rejected.
-- `geo_connection_status`: test one selected project's API token and report its bound project, token name, scopes and expiry without revealing the bearer.
+- `geo_list_evidence_files`: list allowed evidence file names and sizes from the staging folder; it never reads or returns their contents. The staging folder is optional — the main path is the operator dropping a file into the conversation.
+- `geo_upload_evidence`: upload one document to the canonical multipart route. Two ways to point at the file: `filePath` (the attachment path DSH prints in the message when the operator drags a file into the conversation, plus `fileName` for the original name, since attachment objects are content-addressed and carry no extension) or `fileName` alone (a direct child of the staging folder). Directories, symlinks, empty files, files over 50 MB, and unsupported extensions are rejected before any request goes out.
+- `geo_connection_status`: test one selected project's API token and report its bound project, token name, scopes and expiry without revealing the bearer. It also reports the project's memory state (`memoryOnboardingNeeded`, `memoryAnswerMode`), so one call is enough to know whether the answer mode still has to be asked.
+- `geo_projects`: report the projects this workspace is bound to and hand back a ready-made question structure for `ask_user_question`. Calling it with `select` binds one as the current project (and switches the prompt section's active answer mode). This is the first call behind every "switch project / start GEO / what is this window for" request.
+- `geo_memory`: read, extend, or trim one project's local memory — the answer mode the operator picked, plus custom fine-tuning rules, working habits, key facts, and things to avoid. One JSON file per project ID; projects never share state. Log-shaped entries (interface names, URLs, error codes, order IDs, timestamps, credentials) are refused with a rewrite hint rather than stored.
 
 After saving the card, call `geo_connection_status` with each configured project ID to verify its project token and binding. This check does not perform a GEO business write.
 
@@ -101,6 +103,129 @@ The plugin never retries automatically. It returns `outcome: unknown` with the o
 Image/video file upload uses the separate Resource/OSS path and is outside this GEO OpenAPI plugin. Existing project media can be listed or bound through contracted GEO operations; new media must be uploaded in the GEO UI for this version.
 
 Content injection (T-OPEN-42, added to the contract on 2026-10-08) writes article content into the customer's own platform account and the contract requires it to be started by a human. The plugin therefore exposes only the two read queries of that domain — `get_injection_tasks` and `get_injection_hosts` — while `geo:injection:*` stays out of `projectApiTokens.allowedScopes` and the listing endpoints appear in the generated coverage map's "not exposed" table by design. Injection state means content reached the platform editor, never that the platform published it.
+
+## Answer mode and per-project memory
+
+Operators do not all want the same delivery. This plugin therefore asks once, per project, and remembers the answer.
+
+**The onboarding question.** Every GEO project starts with `geo_memory({ operation: 'read', projectId })`. When the project has never been configured, the result carries `onboardingNeeded: true` plus ready-made `modeOptions`, and the agent's first user-facing move is `ask_user_question` with those options. The picked mode is written back with `remember`, and the flag flips — the question is not asked again for that project.
+
+**Three modes** (`brief` is the default and the recommended option in the question; the list order is the recommendation order):
+
+| Mode | What the operator gets |
+|---|---|
+| `brief` — 简洁模式 | Conclusion first, numbered steps, one screen. No restating, no padding, no closing pleasantries. |
+| `operator` — 高级微调运营模式 | Professional business prose. Conclusions, evidence, next steps. No interface names, English errors, field types, or technical remediation advice. |
+| `standard` — 标准模式 | Full technical detail (interface names, error codes, field semantics) for operators who debug themselves. |
+
+Each project can also carry `customRules` — free-form fine-tuning written by the operator ("ask one question at a time", "quote everything in CNY") — which take precedence over the preset.
+
+**How the mode reaches the model.** The plugin registers one global prompt section (`geo:operator-protocol`, order 3200, ahead of the tool SDK block) plus an interpolated variable `geo_operator_mode`. The section holds the standing protocol (read memory first; ask once; keep records to reusable conclusions only; never carry one project's settings into another); the variable holds the *currently read* project's mode. Because the section is global and modes are per project, the variable is what keeps them apart — `geo_memory read` is the only writer, and the protocol requires it before any business action.
+
+**Storage.** One file per project: `<memoryDirectory>/<projectId>.json`, defaulting to `<DSH_HOME>/geo-memory`. The limit is deliberate — habits ≤ 8, key facts ≤ 12, avoid ≤ 6, custom rules ≤ 6, each item ≤ 160 characters, whole file ≤ 8 KB. Overflow is refused with the reason, never silently truncated, and the same gate runs on read, so a hand-edited file cannot smuggle noise back in. Derived facts such as "has the mode been configured" are computed on read and never written to disk.
+
+**Turning it off** (`memoryEnabled: false` in the settings card) makes `geo_memory` report that memory is disabled; it does not read or write any file. `answerModeDefault` only decides which option is recommended for projects that have not been asked yet.
+
+Verify the prompt layer without restarting the desktop app:
+
+```powershell
+# 用 DSH 真实渲染器跑一遍段与变量，确认插值不抛错、模式行正确
+node -e "import('file:///D:/deepseek-harness/resources/app/dsh/node_modules/@deepseek-ai/dsh-system-prompt/lib/index.js').then(async ({ renderPrompt }) => { const m = await import('./src/operator-mode.js'); const s = m.createModeState({ mode: 'brief', projectId: '101', projectName: 'A' }); console.log(renderPrompt({ sections: [{ name: 'geo:operator-protocol', order: 3200, text: m.operatorProtocolSection() }], variables: { geo_operator_mode: m.modeDirective(s) } })); })"
+```
+
+## Picking the project, and staying in scope
+
+**The `/geo` command.** Typed in the composer, it never reaches the model — so it is faster and more reliable than waiting for the agent to react:
+
+| Input | Effect |
+|---|---|
+| `/geo` | lists every bound project: short ID, answer mode, which one is current |
+| `/geo <projectId>` | switches the current project, writes the pointer, and swaps the prompt section's active answer mode |
+| `/geo help` | usage |
+
+**Same thing by voice.** "绑定项目 / 换项目 / 切项目 / 启动 GEO / 开始运营 / 接手项目 / 这个窗口做什么" makes the agent call `geo_projects`, hand the returned `question` straight to `ask_user_question`, then bind the pick with `select`. The question structure comes from the plugin so the agent does not re-invent the options.
+
+**The active project** lives in `<memoryDirectory>/_active.json` — one pointer for the workspace, deliberately not stored inside any project's memory (switching projects is not a write to the project you are leaving). Underscore prefix keeps it clear of numeric project IDs.
+
+**Scope guard.** `operatorIdentity: 'geo-only'` (the default) registers a second prompt section that limits this runtime to two kinds of work: running a GEO project, and maintaining the workspace itself (plugin, config, credentials, progress page, exports). Everything else — unrelated code, résumé analysis, translation, general Q&A, chit-chat — gets one sentence saying this window only does GEO work, plus a pointer back to the current project, and nothing else. The test the model is told to apply: *would the output land on a GEO project or on this workspace?* If not, it does not do it.
+
+Set `operatorIdentity: 'off'` in the settings card (or the profile's `cordis.patch.yml`) while developing the plugin itself; that is what the switch is for. Tool-level isolation (`restrictTools`) is a separate, harder control — turning it on also removes the shell and file tools, which is why scope guarding defaults to the prompt layer.
+
+## Managing the desktop pet
+
+The pet is a **separate download**, not a dependency of this plugin: the two repositories reference each other, but neither ships the other's code. Install it only if you want it:
+
+```powershell
+dsh plugin add github:12we21/cute-fat-fish-pet
+```
+
+→ [cute-fat-fish-pet](https://github.com/12we21/cute-fat-fish-pet) (MIT, by Mikolu). Restart DSH once after installing it.
+
+**The settings card detects it and adapts.** After a restart the card looks at this profile's `node_modules`:
+
+- **Not installed** → no switch. The card shows what the pet does and the install command above, because a switch for something that is not there is just noise.
+- **Installed** → the switch appears, backed by a managed block in this profile's `cordis.patch.yml` that DSH's own live reload applies (no restart to toggle).
+
+The detection result travels through the session projection the workbench already reads — specifically through `wire.view`, which is re-evaluated on every read, so flipping the switch updates the card within a second or two. If the host does not expose the `sessions` service, the card falls back to showing the switch rather than hiding it: a possibly-inert switch beats a feature nobody knows exists.
+
+```yaml
+# >>> geo-workbench managed: desktop pet (do not edit by hand) >>>
+- id: cute-fat-fish-pet
+  disabled: true
+# <<< geo-workbench managed: desktop pet <<<
+```
+
+Writing rules, because this edits host configuration: only the marked block is touched (every other line, comments included, survives byte for byte), the write is atomic, a timestamped `.bak-geo-pet-*` copy stays behind, repeating a target state writes nothing at all, and a patch that would end up empty is written as `[]` — an empty or comment-only file makes the profile fail to start. The block appears only after the switch has actually been used once; the default leaves the profile untouched.
+
+`geo_pet_control` reports the state read-only (installed? enabled? managed by the workbench?) and carries the install command when the pet is missing, so the agent can offer it too. Changing the state goes through the card, never through a tool — same rule as the approval policies.
+
+**What the pet shows.** It already maps session events to states: `turn/start` → thinking, `tool/call` → working, `ask_user_question` or an approval prompt → waiting, `turn/end` → success/failure. The one thing it cannot infer is *what* you are doing — only `todo_write` gives it a line of text. The GEO skill therefore requires a todo list per run ("事实确认：逐条给运营过一遍"), so the pet says that instead of a bare "working".
+
+## Compatibility
+
+### DSH runtime versions
+
+DSH checks a plugin's `peerDependencies` for `@deepseek-ai/dsh` and `@deepseek-ai/dsh-*` before it imports the plugin, comparing each declared range against `getDshRuntimeVersion()`. Prereleases take part in matching. A mismatch rejects the plugin **before any module is imported**, so the plugin never runs half-loaded.
+
+This plugin declares `^0.2.0-rc.2` for `@deepseek-ai/dsh-tools` and `@deepseek-ai/dsh-credentials`. Verified with DSH's own evaluator:
+
+| Runtime | Outcome |
+|---|---|
+| 0.2.0-rc.1 | rejected (older than the declared floor) |
+| 0.2.0-rc.2 · rc.3 · 0.2.0 · 0.2.1 · 0.2.9 | **accepted, no exemption needed** |
+| 0.3.0 · 1.0.0 | rejected — re-evaluate the plugin API before widening |
+
+`^0.2.0-rc.2` deliberately stops at the minor boundary: within 0.2.x the plugin API is stable, but across a minor in a 0.x line the services this plugin uses (`ctx.tools`, `ctx.agents`, `ctx.credentials`, `ctx.systemPrompt`, `sessionProjections`) can change. Being refused loudly beats crashing at runtime. To cross that line on purpose:
+
+```powershell
+dsh plugin allow-version "@geo-internal/geo-agent-dsh-plugin@0.1.0" --dsh-version 0.3.0 --accept-risk
+```
+
+Exemptions live in the profile's own `compatibility.json`, name one exact `package@version` plus one exact runtime version, and are **not inherited** by plugin or DSH upgrades — each new pair needs its own grant. Declaring no DSH peer at all would remove the check entirely; this plugin keeps the check on purpose.
+
+Re-verify after touching `peerDependencies`:
+
+```powershell
+node -e "import('file:///D:/deepseek-harness/resources/app/dsh/node_modules/@deepseek-ai/dsh-app-boot/lib/index.js').then(m => console.log(m.evaluatePluginCompatibility(require('./package.json'), {}, '0.2.1')))"
+```
+
+### Host platforms
+
+Windows, macOS, and Linux are all supported; nothing in the plugin shells out to a platform-specific binary. The places where platforms actually differ, and what the code does about each:
+
+| Difference | Handling |
+|---|---|
+| Replacing a file can fail transiently on Windows (antivirus, indexer, Explorer holding the target) | Memory writes retry `EACCES` / `EBUSY` / `EPERM` / `ENOTEMPTY` with bounded backoff; the temp file is removed and the target left untouched on final failure |
+| POSIX permission bits are ignored on Windows, meaningful on macOS/Linux | Memory files are created `0600`; on Windows the mode is simply ignored |
+| `O_NOFOLLOW` does not exist on Windows | Used as `constants.O_NOFOLLOW \|\| 0`, so the flag degrades to a plain read while `lstat` still refuses symlinks and junctions |
+| Symlinks/junctions need elevation to create on Windows | The refusal path is tested everywhere; creating the link is skipped where the OS refuses it |
+| Case-insensitive filesystems (Windows, default macOS) | Memory files are keyed by numeric project IDs, so casing can never collide |
+| `realpath` may rewrite `/tmp` → `/private/tmp` (macOS) or resolve junctions (Windows) | Both sides of every containment check go through `realpath`, never one side only |
+| Directory `fsync` is unavailable on Windows | Not used; the atomic rename itself provides the visibility guarantee |
+| Long paths (Windows `MAX_PATH`) | Attachment objects are 64-char hashes under a short prefix; no path is built longer than the source path plus one segment |
+| Unicode file names (CJK, NFD/NFC on macOS) | File names travel as opaque UTF-8 strings; the plugin never matches on them, only passes them through |
+
+Attachment uploads additionally never trust the filesystem shape: `lstat` before open, `stat` after open, and a size/mtime comparison to catch a swap in between — on every platform.
 
 ## OpenAPI generation and tests
 

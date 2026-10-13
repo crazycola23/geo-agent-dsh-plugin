@@ -68,8 +68,8 @@
     "validate": "node ./scripts/validate-catalog.mjs"
   },
   "peerDependencies": {
-    "@deepseek-ai/dsh-credentials": "0.2.0-rc.2",
-    "@deepseek-ai/dsh-tools": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-credentials": "^0.2.0-rc.2",
+    "@deepseek-ai/dsh-tools": "^0.2.0-rc.2",
     "@deepseek-ai/schemastery": "~3.18.4"
   },
   "dependencies": {

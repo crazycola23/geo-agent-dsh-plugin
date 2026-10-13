@@ -56,7 +56,59 @@ async function openStagedEvidence(evidenceDirectory, filename) {
     if (opened.size !== after.size || opened.mtimeMs !== after.mtimeMs) {
       throw new Error('资料文件在打开过程中发生了变化，已停止读取。');
     }
-    return { handle, size: opened.size };
+    if (opened.size === 0) throw new Error('这个资料文件是空的，上传它没有意义。');
+    // 两条路径（暂存目录 / 附件路径）都要把最终文件名交出去，上传侧不再自己猜。
+    return { handle, size: opened.size, fileName: filename };
+  } catch (error) {
+    await handle.close();
+    throw error;
+  }
+}
+
+/**
+ * 单个资料文件的字节上限。GEO 服务端自己也会拦，这里提前拒绝是为了不把
+ * 上百兆的东西读进内存再被对面拒掉。
+ */
+const maxEvidenceBytes = 50 * 1024 * 1024;
+
+/**
+ * 按本地路径打开一个资料文件：运营在对话里直接拖进来的附件就是这个形状——
+ * DSH 的附件按内容寻址保存（`objects/<两位>/<sha256>`），**路径本身没有扩展名**，
+ * 所以原名要单独给（`declaredName`），它决定 GEO 侧看到的文件名与 MIME。
+ *
+ * 安全边界与投递目录那条路径同源：只读、拒符号链接、拒非普通文件、
+ * 打开前后各校验一次（防打开过程中被替换）。
+ */
+async function openEvidencePath(filePath, declaredName) {
+  if (typeof filePath !== 'string' || filePath.trim() === '') {
+    throw new Error('filePath 必须是这个资料文件的绝对路径。');
+  }
+  const candidate = resolve(filePath.trim());
+  const effectiveName = isSupportedEvidenceName(declaredName) ? declaredName : basename(candidate);
+  if (!isSupportedEvidenceName(effectiveName)) {
+    throw new Error('资料文件的扩展名必须是 .doc、.docx、.pdf 或 .txt。附件保存路径本身没有扩展名，所以这时要同时给出原名（fileName）。');
+  }
+
+  const before = await lstat(candidate);
+  if (before.isSymbolicLink()) throw new Error('资料文件不能是快捷方式或符号链接。');
+  if (!before.isFile()) throw new Error('这个路径不是普通文件，没法当资料上传。');
+
+  const flags = constants.O_RDONLY | (constants.O_NOFOLLOW || 0);
+  const handle = await open(candidate, flags);
+  try {
+    const opened = await handle.stat();
+    const after = await lstat(candidate);
+    if (!opened.isFile() || after.isSymbolicLink() || !after.isFile()) {
+      throw new Error('资料文件在打开过程中发生了变化，已停止读取。');
+    }
+    if (opened.size !== after.size || opened.mtimeMs !== after.mtimeMs) {
+      throw new Error('资料文件在打开过程中发生了变化，已停止读取。');
+    }
+    if (opened.size === 0) throw new Error('这个资料文件是空的，上传它没有意义。');
+    if (opened.size > maxEvidenceBytes) {
+      throw new Error(`资料文件 ${(opened.size / 1024 / 1024).toFixed(1)} MB，超过 ${maxEvidenceBytes / 1024 / 1024} MB 上限，请先拆分或压缩。`);
+    }
+    return { handle, size: opened.size, fileName: effectiveName };
   } catch (error) {
     await handle.close();
     throw error;
@@ -629,7 +681,7 @@ export async function executeGeoEvidenceUpload({ catalog, args, evidenceDirector
     return { ok: false, outcome: 'rejected', error: '生成的操作清单里没有找到资料上传接口，无法上传。' };
   }
   if (!isPlainObject(args)) return { ok: false, outcome: 'rejected', error: '工具参数必须是一个对象。' };
-  const allowedArgs = new Set(['projectId', 'fileName', 'name', 'idempotencyKey']);
+  const allowedArgs = new Set(['projectId', 'fileName', 'filePath', 'name', 'idempotencyKey']);
   const unknown = Object.keys(args).filter(key => !allowedArgs.has(key));
   if (unknown.length) return { ok: false, outcome: 'rejected', error: `上传工具不认识的参数：${unknown.join('、')}` };
   const projectId = String(args.projectId ?? '');
@@ -638,9 +690,13 @@ export async function executeGeoEvidenceUpload({ catalog, args, evidenceDirector
     return { ok: false, outcome: 'rejected', error: '资料名称必须是 1 到 300 个字符的文本，且不能包含控制字符。' };
   }
 
-  const uploadBody = { projectId, file: args.fileName, ...(args.name === undefined ? {} : { name: args.name }) };
-  const validationErrors = validateValue(uploadBody, operation.requestBody.schema, 'body', catalog.schemas);
-  if (validationErrors.length) return { ok: false, outcome: 'rejected', error: '上传字段不符合 GEO 接口契约，已被拦下', validationErrors };
+  if (args.filePath !== undefined && typeof args.filePath !== 'string') {
+    return { ok: false, outcome: 'rejected', error: 'filePath 必须是这个资料文件的绝对路径。' };
+  }
+  if (args.filePath === undefined && args.fileName === undefined) {
+    return { ok: false, outcome: 'rejected', error: '要上传哪个文件：给出 filePath（对话里拖进来的附件保存路径，或任意本地路径），或给出投递目录里的 fileName。' };
+  }
+
   const idemParam = operation.parameters.find(param => param.in === 'header' && param.name.toLowerCase() === 'x-idempotency-key');
   if (!idemParam) return { ok: false, outcome: 'rejected', error: '生成的上传接口定义里缺少 X-Idempotency-Key，无法安全上传。' };
   if (args.idempotencyKey !== undefined) {
@@ -660,14 +716,26 @@ export async function executeGeoEvidenceUpload({ catalog, args, evidenceDirector
   catch (error) { return { ok: false, outcome: 'rejected', error: error.message }; }
 
   let opened;
-  try { opened = await openStagedEvidence(evidenceDirectory, args.fileName); }
-  catch (error) { return { ok: false, outcome: 'rejected', error: error.message }; }
+  try {
+    opened = args.filePath !== undefined
+      ? await openEvidencePath(args.filePath, args.fileName)
+      : await openStagedEvidence(evidenceDirectory, args.fileName);
+  } catch (error) { return { ok: false, outcome: 'rejected', error: error.message }; }
+
+  // 契约校验要排在文件名确定之后：附件保存路径没有扩展名，GEO 侧看到的名字
+  // 由原名（fileName）或路径自身决定，只有打开完才知道该报什么。
+  const uploadBody = { projectId, file: opened.fileName, ...(args.name === undefined ? {} : { name: args.name }) };
+  const validationErrors = validateValue(uploadBody, operation.requestBody.schema, 'body', catalog.schemas);
+  if (validationErrors.length) {
+    await opened.handle.close().catch(() => {});
+    return { ok: false, outcome: 'rejected', error: '上传字段不符合 GEO 接口契约，已被拦下', validationErrors };
+  }
 
   let contentDigest;
   try { contentDigest = await hashStagedFile(opened.handle); }
   catch {
     await opened.handle.close().catch(() => {});
-    return { ok: false, outcome: 'rejected', error: '读不了投递目录里的资料文件，没有向 GEO 发出任何请求。' };
+    return { ok: false, outcome: 'rejected', error: '读不了这个资料文件，没有向 GEO 发出任何请求。' };
   }
   const idempotencyKey = args.idempotencyKey || deterministicUploadKey(projectId, contentDigest);
   const keyErrors = validateValue(idempotencyKey, idemParam.schema, 'headers.X-Idempotency-Key', catalog.schemas);
@@ -688,7 +756,7 @@ export async function executeGeoEvidenceUpload({ catalog, args, evidenceDirector
   const request = {
     method: operation.method,
     headers,
-    body: multipartStream({ boundary, projectId, name: args.name, filename: args.fileName, handle: opened.handle }),
+    body: multipartStream({ boundary, projectId, name: args.name, filename: opened.fileName, handle: opened.handle }),
     duplex: 'half',
     redirect: 'manual',
     signal: requestTimeoutSignal(signal, timeoutMs),
@@ -704,7 +772,7 @@ export async function executeGeoEvidenceUpload({ catalog, args, evidenceDirector
       outcome: 'unknown',
       operation: operation.name,
       method: operation.method,
-      fileName: args.fileName,
+      fileName: opened.fileName,
       projectId,
       idempotencyKey,
       error: 'GEO 没有返回任何响应，这次上传可能已经被受理。请先查这个项目的资料列表；如果规则允许恢复，就用同一个幂等键重试。',
@@ -714,24 +782,24 @@ export async function executeGeoEvidenceUpload({ catalog, args, evidenceDirector
 
   const contentType = response.headers.get('content-type') || 'unknown';
   if (response.status >= 300 && response.status < 400) {
-    return { ok: false, outcome: 'rejected', operation: operation.name, status: response.status, fileName: args.fileName, projectId, idempotencyKey, error: 'GEO 返回了跳转。为免把凭据带到别的地址，插件没有跟随跳转。' };
+    return { ok: false, outcome: 'rejected', operation: operation.name, status: response.status, fileName: opened.fileName, projectId, idempotencyKey, error: 'GEO 返回了跳转。为免把凭据带到别的地址，插件没有跟随跳转。' };
   }
   if (response.status >= 500) {
-    return { ok: false, outcome: 'unknown', operation: operation.name, status: response.status, fileName: args.fileName, projectId, idempotencyKey, error: '上传请求发出后，GEO 返回了服务端错误。请先查该项目的资料列表再决定；不要直接再提交一次上传。' };
+    return { ok: false, outcome: 'unknown', operation: operation.name, status: response.status, fileName: opened.fileName, projectId, idempotencyKey, error: '上传请求发出后，GEO 返回了服务端错误。请先查该项目的资料列表再决定；不要直接再提交一次上传。' };
   }
 
   let text;
   try { text = await readJsonLimited(response); }
   catch (error) {
-    return { ok: false, outcome: response.ok ? 'unknown' : 'rejected', operation: operation.name, status: response.status, fileName: args.fileName, projectId, idempotencyKey, error: error.message };
+    return { ok: false, outcome: response.ok ? 'unknown' : 'rejected', operation: operation.name, status: response.status, fileName: opened.fileName, projectId, idempotencyKey, error: error.message };
   }
   if (!contentType.toLowerCase().includes('json')) {
-    return { ok: false, outcome: response.ok ? 'unknown' : 'rejected', operation: operation.name, status: response.status, fileName: args.fileName, projectId, idempotencyKey, error: 'GEO 没有返回预期的资料记录。请先查该项目的资料列表再决定如何处理。' };
+    return { ok: false, outcome: response.ok ? 'unknown' : 'rejected', operation: operation.name, status: response.status, fileName: opened.fileName, projectId, idempotencyKey, error: 'GEO 没有返回预期的资料记录。请先查该项目的资料列表再决定如何处理。' };
   }
   let envelope;
   try { envelope = JSON.parse(text); }
   catch {
-    return { ok: false, outcome: response.ok ? 'unknown' : 'rejected', operation: operation.name, status: response.status, fileName: args.fileName, projectId, idempotencyKey, error: 'GEO 返回的内容不是合法 JSON。重复上传之前，请先查该项目的资料列表。' };
+    return { ok: false, outcome: response.ok ? 'unknown' : 'rejected', operation: operation.name, status: response.status, fileName: opened.fileName, projectId, idempotencyKey, error: 'GEO 返回的内容不是合法 JSON。重复上传之前，请先查该项目的资料列表。' };
   }
   const ok = response.ok && (envelope?.code === undefined || envelope.code === 200);
   const data = redact(envelope?.data ?? envelope);
@@ -743,7 +811,7 @@ export async function executeGeoEvidenceUpload({ catalog, args, evidenceDirector
     status: response.status,
     ...smallDetails(envelope),
     data: bounded(data, boundedState),
-    fileName: args.fileName,
+    fileName: opened.fileName,
     projectId,
     idempotencyKey,
   };
@@ -756,7 +824,7 @@ export async function executeGeoEvidenceUpload({ catalog, args, evidenceDirector
       status: response.status,
       requestId: envelope?.requestId,
       bizCode: envelope?.bizCode,
-      fileName: args.fileName,
+      fileName: opened.fileName,
       projectId,
       idempotencyKey,
       dataOmitted: true,

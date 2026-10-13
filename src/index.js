@@ -6,9 +6,46 @@ import { defineTool } from '@deepseek-ai/dsh-tools';
 import { createGeoAuthProvider, executeWithGeoProjectToken } from './auth-provider.js';
 import { executeGeoOperation, executeGeoEvidenceUpload, executeGeoArticleExport, listStagedEvidenceFiles, describeOperation, isWriteOperation } from './api-client.js';
 import { Config, pluginSettings } from './config.js';
-import { resolveProjectSelection } from './project-context.js';
+import { normalizeProjectId, resolveProjectSelection } from './project-context.js';
 import { schemaSummary } from './schema.js';
 import { emptyProgressState, emptyStageState, foldToolCall, foldToolResult, GEO_EVIDENCE_OPERATION, projectEvent, stageView } from './stages.js';
+import {
+  MODE_CATALOG,
+  MODE_SECTION_NAME,
+  MODE_SECTION_ORDER,
+  SCOPE_GUARD,
+  SCOPE_GUARD_SECTION_NAME,
+  SCOPE_GUARD_SECTION_ORDER,
+  ANSWER_MODES,
+  createModeState,
+  modeCatalogView,
+  modeDirective,
+  modeOptions,
+  normalizeAnswerMode,
+  operatorProtocolSection,
+  projectQuestion,
+} from './operator-mode.js';
+import {
+  LIST_FIELDS,
+  applyMemoryForget,
+  applyMemoryWrite,
+  memoryFilePath,
+  memoryItemCount,
+  memoryView,
+  readActiveProject,
+  readMemory,
+  unknownWriteFields,
+  withMemoryLock,
+  writeActiveProject,
+  writeMemory,
+} from './operator-memory.js';
+import {
+  MANAGED_PET_PLUGIN,
+  petPluginInstalled,
+  readPetManagedState,
+  resolveProfilePatchPath,
+  setPetDisabled,
+} from './pet-control.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const catalog = JSON.parse(readFileSync(resolve(here, 'generated', 'openapi.catalog.json'), 'utf8'));
@@ -28,6 +65,8 @@ const operationNames = Object.keys(catalog.operations).sort();
 //   所以这里不列 schedule_*，它们在隔离打开时照样可用——这正是 GEO 长任务
 //   要的「提交后挂定时回查」。
 const toolNames = [
+  'geo_memory',
+  'geo_projects',
   'geo_api',
   'geo_describe_operation',
   'geo_list_evidence_files',
@@ -37,6 +76,7 @@ const toolNames = [
   'geo_clear_progress',
   'geo_connection_status',
   'geo_approval_policy',
+  'geo_pet_control',
   'ask_user_question',
 ];
 // 写入委派域。每个键对应一个设置项（ask 保持人工审批，显式填 agent 才把该域的
@@ -286,12 +326,415 @@ export function apply(ctx, config = {}) {
   const currentSettings = () => pluginSettings(config);
   // 转发路径前缀是单个实例的配置，不属于接口契约，所以它通过配置快照同时传到
   // 接口客户端和令牌校验两处。
+  // profile 目录：桌宠开关要写的就是这个 profile 的 patch 文件。
+  // profileContext 是 app-boot 的服务，软依赖——拿不到时开关会如实报「找不到配置文件」。
+  let injectedProfileDirectory = '';
+  if (typeof ctx.inject === 'function') {
+    try {
+      ctx.inject(['profileContext'], (profileCtx) => {
+        const dir = profileCtx?.profileContext?.dir;
+        if (typeof dir === 'string') injectedProfileDirectory = dir;
+      });
+    } catch (error) {
+      console.warn(`[geo-agent-dsh-plugin] 读不到 profile 位置，桌宠开关将不可用：${error?.message ?? error}`);
+    }
+  }
+
   const auth = createGeoAuthProvider({
     credentials: ctx.credentials,
     tokenPrefix: catalog.projectApiTokenPolicy.tokenPrefix,
     serverPath: catalog.serverPath,
     getSettings: currentSettings,
   });
+
+  // ── 项目记忆与回答模式 ────────────────────────────────────────────────────
+  // 记忆按项目编号分成独立的 JSON 文件；回答模式是**项目级**属性，而提示段是
+  // 全局的（本插件装在 profile 层，不对单个 agent 生效）。两者之间的桥就是
+  // modeState：它记住「本会话最近读到的是哪个项目、那个项目选了哪种回答方式」，
+  // 提示段每次组装都从这里取当前值。geo_memory 的 read 是唯一的写入点，
+  // 而协议要求任何 GEO 动作之前先 read，所以这个值总是先于业务动作就位。
+  let modeState = createModeState({ mode: currentSettings().answerModeDefault });
+
+  const projectNameOf = (projectId, settings) => (settings.projects ?? [])
+    .find(project => project.projectId === projectId)?.name ?? '';
+
+  /** 读一次项目记忆，并把结果同步给提示段。返回值直接给工具用。 */
+  function loadProjectMemory(projectId, settings) {
+    const directory = settings.memoryDirectory;
+    const loaded = readMemory(directory, projectId, projectNameOf(projectId, settings));
+    modeState = createModeState({
+      mode: loaded.memory.answerMode || settings.answerModeDefault,
+      projectId,
+      projectName: loaded.memory.projectName,
+      customRules: loaded.memory.customRules,
+    });
+    return loaded;
+  }
+
+  const memoryDisabledNotice = '项目记忆已在 GEO 工作台的设置里关掉（memoryEnabled = false），本次没有读取或写入任何本地记忆文件。';
+
+  /** 职责范围的开关：只有显式填 'off' 才关掉，其它取值一律按「开着」处理。 */
+  const scopeGuardEnabled = () => currentSettings().operatorIdentity !== 'off';
+
+  // ── 桌宠开关的落地通道 ────────────────────────────────────────────────────
+  // 这个开关管的是**另一个插件**（可爱大肥鱼桌宠），所以它改的不是本插件的配置，
+  // 而是 profile 的 cordis.patch.yml：加一行 `id: cute-fat-fish-pet / disabled: true`，
+  // 由 DSH 自己的 live reload 生效。改宿主配置是有风险的动作，写入纪律见 pet-control.js。
+  const profileDirectoryOf = () => {
+    if (injectedProfileDirectory !== '') return injectedProfileDirectory;
+    try {
+      const live = typeof ctx.get === 'function' ? ctx.get('profileContext') : undefined;
+      if (typeof live?.dir === 'string' && live.dir !== '') return live.dir;
+    } catch { /* 宿主没提供就是拿不到，不猜 */ }
+    return '';
+  };
+  let petWriteBusy = false;
+
+  /** 没装桌宠时给运营的安装命令：一行，复制到终端就行。 */
+  const PET_INSTALL_COMMAND = 'dsh plugin add github:12we21/cute-fat-fish-pet';
+  /** 代管状态的最新快照。轮询每 2 秒刷一次，视图从这里同步取值。 */
+  let petManagedSnapshot = { managed: false, disabled: false };
+
+  /**
+   * 桌宠状态快照，给设置卡用。安装检测走文件系统（同步、便宜），代管状态取缓存——
+   * 视图每次组装都会调它，所以运营改完开关一两秒内卡片就能自证新状态。
+   */
+  const currentPetState = () => {
+    const installed = petPluginInstalled(profileDirectoryOf());
+    return {
+      installed,
+      enabled: currentSettings().petEnabled !== false,
+      managedByGeoWorkbench: petManagedSnapshot.managed,
+      disabledInProfile: petManagedSnapshot.disabled,
+      installCommand: installed ? '' : PET_INSTALL_COMMAND,
+    };
+  };
+
+  /**
+   * 把「设置卡里的桌宠开关」收敛到 profile 配置上。
+   * 只读不写是常态：目标状态与现状一致时立刻返回，磁盘不会被每 2 秒碰一次。
+   */
+  const reconcilePetSwitch = async () => {
+    const patchPath = resolveProfilePatchPath({ profileDirectory: profileDirectoryOf() });
+    if (patchPath === '' || petWriteBusy) return;
+    const desiredDisabled = currentSettings().petEnabled === false;
+    try {
+      const state = await readPetManagedState(patchPath);
+      if (!state.ok) return;
+      // 快照先更新：设置卡靠它显示「装没装 / 开着没」，与要不要写盘无关。
+      petManagedSnapshot = { managed: state.managed, disabled: state.disabled };
+      if (state.disabled === desiredDisabled) return;
+      petWriteBusy = true;
+      const written = await setPetDisabled(patchPath, desiredDisabled);
+      if (!written.ok) {
+        console.warn(`[geo-agent-dsh-plugin] 桌宠开关没有落地：${written.error}`);
+      } else if (written.changed) {
+        console.warn(`[geo-agent-dsh-plugin] 桌宠已${desiredDisabled ? '关闭' : '开启'}（改了 ${patchPath}，DSH 会自己重载这一条）。`);
+      }
+    } catch (error) {
+      console.warn(`[geo-agent-dsh-plugin] 桌宠开关处理失败：${error?.message ?? error}`);
+    } finally {
+      petWriteBusy = false;
+    }
+  };
+
+  const modeLabelOf = mode => (MODE_CATALOG[mode] ?? MODE_CATALOG.brief).label;
+
+  /**
+   * `/geo` 命令：不经过模型，直接给运营一份能看、能切的清单。
+   * 运营打 `/geo` 就够，不需要先跟 AI 说一句话再看它反应。
+   */
+  const runGeoCommand = async (invocation) => {
+    const settings = currentSettings();
+    const configured = settings.projects ?? [];
+    const active = readActiveProject(settings.memoryDirectory);
+    const raw = String(invocation?.rawInput ?? '').trim();
+    const usage = '用法：/geo 看项目清单与当前项目 · /geo <项目编号> 切换项目 · /geo help 看这段说明';
+
+    if (raw.toLowerCase() === 'help') return { kind: 'success', text: usage };
+    if (configured.length === 0) {
+      return {
+        kind: 'error',
+        text: `这个工作台还没有绑定任何 GEO 项目。到「GEO 工作台」设置卡里加上项目编号与访问令牌，再回来打 /geo。\n${usage}`,
+      };
+    }
+
+    if (raw === '' || raw.toLowerCase() === 'list') {
+      const lines = ['这个窗口绑定的 GEO 项目：', ''];
+      for (const project of configured) {
+        const isActive = project.projectId === active.projectId;
+        const name = (project.name ?? '').trim() || `未命名项目（…${project.projectId.slice(-6)}）`;
+        const { memory } = readMemory(settings.memoryDirectory, project.projectId, name);
+        const modeLabel = memory.answerMode ? modeLabelOf(memory.answerMode) : '还没定过';
+        lines.push(`${isActive ? '▶ ' : '   '}${name}（…${project.projectId.slice(-6)}）`);
+        lines.push(`     编号 ${project.projectId} · 回答方式：${modeLabel}${isActive ? ' · 当前项目' : ''}`);
+      }
+      lines.push('');
+      lines.push(active.projectId
+        ? `当前运营的项目：${active.projectName || active.projectId}`
+        : '当前还没有选定项目，用 /geo <项目编号> 选一个。');
+      lines.push('切换项目：/geo <项目编号>');
+      return { kind: 'success', text: lines.join('\n') };
+    }
+
+    const projectId = normalizeProjectId(raw);
+    if (!projectId) {
+      return { kind: 'error', text: `认不出「${raw}」这个项目编号——要用完整的数字编号。\n${usage}` };
+    }
+    const known = configured.find(project => project.projectId === projectId);
+    if (!known) {
+      return { kind: 'error', text: `项目 ${projectId} 不在这个工作台已绑定的清单里。打 /geo 看清单。\n${usage}` };
+    }
+
+    const configuredName = (known.name ?? '').trim();
+    const { memory } = readMemory(settings.memoryDirectory, projectId, configuredName);
+    const projectName = configuredName || memory.projectName;
+    const stored = await writeActiveProject(settings.memoryDirectory, { projectId, projectName });
+    // 绑定即切换提示段里的当前档位：接下来每个模型步骤都带这个项目的回答方式。
+    modeState = createModeState({
+      mode: memory.answerMode || settings.answerModeDefault,
+      projectId,
+      projectName,
+      customRules: memory.customRules,
+    });
+    const modeLine = memory.answerMode
+      ? `这个项目的回答方式：${modeLabelOf(memory.answerMode)}。`
+      : '这个项目还没定过回答方式，开工时它会问你一句。';
+    return {
+      kind: 'success',
+      text: [
+        `已切换到这个窗口运营的项目：${projectName || projectId}（${projectId}）。`,
+        modeLine,
+        stored ? '接下来直接说你要干什么就行。' : '（本次没能记住这个选择，下次开窗要再选一次。）',
+      ].join('\n'),
+    };
+  };
+
+  ctx.tools.register(defineGeoTool({
+    name: 'geo_memory',
+    description: '读写某个 GEO 项目的本地记忆：回答方式（运营希望 AI 用什么口吻交付）、微调规则、操作习惯、项目关键事实、禁忌。按项目编号分文件存放，项目之间互不影响。开始某个项目的作业前先读一次（read）；返回 onboardingNeeded: true 时，先用 ask_user_question 问运营要哪种回答方式，拿到答复立刻 remember 落盘。只记可复用的结论，不记调用流水、接口名、错误码、订单号与凭据——这些会被拒绝并说明理由。',
+    parameters: {
+      operation: {
+        type: 'string',
+        enum: ['read', 'remember', 'forget'],
+        required: true,
+        description: 'read 读记忆（含「是否还没问过回答方式」）；remember 记入新内容；forget 删掉某一条或清空某一类。',
+      },
+      projectId: { type: 'string', required: true, description: '要读写哪个项目的记忆，取已配置的项目编号。' },
+      answerMode: {
+        type: 'string',
+        enum: ANSWER_MODES,
+        description: '回答方式：operator 高级微调运营模式（专业但说业务语言，不出现技术术语）/ brief 简洁模式（结论先行、编号步骤、单屏）/ standard 标准模式（保留技术细节）。',
+      },
+      customRules: { type: 'json', description: '字符串数组，运营自己追加的微调规则；优先级高于预设档位。' },
+      habits: { type: 'json', description: '字符串数组，该项目的操作习惯（例：「发布前先导出稿件给运营过一遍」）。' },
+      keyFacts: { type: 'json', description: '字符串数组，该项目的关键事实（例：「主推品牌词是万事达」）。' },
+      avoid: { type: 'json', description: '字符串数组，禁忌（例：「不要自动确认事实，逐条给运营看」）。' },
+      field: { type: 'string', enum: [...LIST_FIELDS], description: 'forget 用：要删哪一类。不传则删掉 item 指定的那条。' },
+      item: { type: 'string', description: 'forget 用：要删掉的那一条原文；不传则清空 field 指定的整类。' },
+    },
+    async execute(args) {
+      const settings = currentSettings();
+      const projectId = normalizeProjectId(args.projectId);
+      if (!projectId) {
+        return { ok: false, outcome: 'rejected', error: '项目编号必须是有效的 GEO 项目编号：正整数。请从 geo_approval_policy 的 configuredProjects 里取。' };
+      }
+      if (settings.memoryEnabled === false) {
+        return { ok: false, outcome: 'rejected', error: memoryDisabledNotice };
+      }
+      if (!['read', 'remember', 'forget'].includes(args.operation)) {
+        return { ok: false, outcome: 'rejected', error: 'operation 只能是 read、remember 或 forget。' };
+      }
+
+      if (args.operation === 'read') {
+        const { memory, exists, configured, error } = loadProjectMemory(projectId, settings);
+        const needsOnboarding = !configured;
+        return {
+          ok: true,
+          outcome: 'complete',
+          projectId,
+          memory: memoryView(memory),
+          storage: {
+            directory: settings.memoryDirectory,
+            file: memoryFilePath(settings.memoryDirectory, projectId),
+            exists,
+          },
+          onboardingNeeded: needsOnboarding,
+          onboardingReason: needsOnboarding
+            ? '这个项目还没有定过回答方式。用 ask_user_question 问一次运营，候选用 modeOptions，拿到答复后用 remember 落盘；之后每次读都会带上已选的档位，不必再问。'
+            : '',
+          modeOptions: needsOnboarding ? modeOptions(settings.answerModeDefault) : [],
+          readError: error,
+          answerModes: modeCatalogView(),
+        };
+      }
+
+      const { memory: current, error: readError } = loadProjectMemory(projectId, settings);
+      // operation 与 projectId 是工具自己的参数，不是记忆字段：清掉它们再比对，
+      // 否则每次 remember 都会被自己的调用参数判成「未知字段」。
+      const { operation: _operation, projectId: _projectId, ...memoryArgs } = args;
+      const unknown = unknownWriteFields(args.operation === 'remember' ? memoryArgs : {});
+      if (args.operation === 'remember' && unknown.length > 0) {
+        return {
+          ok: false,
+          outcome: 'rejected',
+          projectId,
+          error: `记忆里没有这些字段：${unknown.join('、')}。能记的只有 answerMode、customRules、habits、keyFacts、avoid。`,
+          readError,
+        };
+      }
+
+      // 读 → 改 → 写整段放进跨进程锁：并行会话（子智能体、另一个窗口）同时改
+      // 同一个项目的记忆时，后写的一方不会用陈旧状态覆盖先写的一方。
+      const locked = await withMemoryLock(settings.memoryDirectory, projectId, async () => {
+        const { memory: lockedCurrent, error: lockedReadError } = loadProjectMemory(projectId, settings);
+        const pending = args.operation === 'remember'
+          ? applyMemoryWrite(lockedCurrent, memoryArgs)
+          : applyMemoryForget(lockedCurrent, memoryArgs);
+        const written = await writeMemory(settings.memoryDirectory, pending.memory);
+        return { pending, written, lockedReadError };
+      });
+      if (!locked.ok) {
+        return { ok: false, outcome: 'rejected', projectId, error: locked.error };
+      }
+      const { pending: result, written, lockedReadError } = locked.value;
+      const effectiveReadError = lockedReadError || readError;
+      if (!written.ok) {
+        return {
+          ok: false,
+          outcome: 'rejected',
+          projectId,
+          error: written.error,
+          applied: result.applied ?? [],
+          removed: result.removed ?? [],
+          rejected: result.rejected ?? [],
+        };
+      }
+      // 模式可能刚被改过：同步提示段，后续每个模型步骤都会带上新档位。
+      modeState = createModeState({
+        mode: result.memory.answerMode || settings.answerModeDefault,
+        projectId,
+        projectName: result.memory.projectName,
+        customRules: result.memory.customRules,
+      });
+      const rejected = result.rejected ?? [];
+      return {
+        ok: true,
+        outcome: 'complete',
+        projectId,
+        operation: args.operation,
+        applied: result.applied ?? [],
+        removed: result.removed ?? [],
+        rejected,
+        // 有内容被闸门挡下时明说「没记上」，否则运营会以为已经记住了。
+        note: rejected.length > 0
+          ? `有 ${rejected.length} 条没有记上（原因见 rejected）。改写成可复用的结论再记一次。`
+          : '',
+        memory: memoryView(result.memory),
+        storage: { directory: settings.memoryDirectory, file: memoryFilePath(settings.memoryDirectory, projectId), exists: true },
+        readError: effectiveReadError,
+      };
+    },
+    presentationMeta: (args, value) => ({
+      kind: 'memory',
+      projectId: typeof args?.projectId === 'string' ? args.projectId : '',
+      operation: typeof args?.operation === 'string' ? args.operation : '',
+      outcome: typeof value?.outcome === 'string' ? value.outcome : 'unknown',
+      answerMode: typeof value?.memory?.answerMode === 'string' ? value.memory.answerMode : '',
+      onboardingNeeded: value?.onboardingNeeded === true,
+      itemCount: Number.isFinite(value?.memory?.itemCount) ? value.memory.itemCount : 0,
+    }),
+  }));
+
+  // 项目清单与绑定：运营说「绑定项目 / 换项目 / 启动 GEO / 这个窗口做什么」时的第一个动作。
+  // 它一次回答两件事——这个工作台绑了哪些项目、现在该运营哪一个。
+  ctx.tools.register(defineGeoTool({
+    name: 'geo_projects',
+    description: '汇报这个工作台已绑定的 GEO 项目，并给出让运营挑一个的现成提问结构。运营说「绑定项目 / 换项目 / 切项目 / 启动 GEO / 开始运营 / 接手项目 / 这个窗口做什么」这类话时先调它；再用返回的 question 调 ask_user_question 让他选；拿到答复后把选中的项目编号作为 select 再调一次完成绑定。之后所有 GEO 动作都用这个项目编号。',
+    parameters: {
+      select: { type: 'string', description: '要绑定成「当前项目」的项目编号，从上次返回的 projects 里取。不传就只汇报清单。' },
+    },
+    async execute({ select }) {
+      const settings = currentSettings();
+      const configured = settings.projects ?? [];
+      const active = readActiveProject(settings.memoryDirectory);
+      const nameOf = project => (project.name && project.name.trim() !== '' ? project.name.trim() : '');
+
+      if (select !== undefined) {
+        const projectId = normalizeProjectId(select);
+        if (!projectId) {
+          return { ok: false, outcome: 'rejected', error: '项目编号必须是有效的 GEO 项目编号：正整数。请从清单里选。' };
+        }
+        const known = configured.find(project => project.projectId === projectId);
+        if (!known) {
+          return {
+            ok: false,
+            outcome: 'rejected',
+            error: `项目 ${projectId} 不在这个工作台已绑定的清单里。先不带参数调一次，从返回的 projects 里挑。`,
+            projects: configured.map(project => ({ projectId: project.projectId, name: nameOf(project) })),
+          };
+        }
+        const { memory } = readMemory(settings.memoryDirectory, projectId, nameOf(known));
+        const projectName = nameOf(known) || memory.projectName;
+        await writeActiveProject(settings.memoryDirectory, { projectId, projectName });
+        // 绑定即切换提示段里的当前模式：接下来每个模型步骤都会带上这个项目的档位。
+        modeState = createModeState({
+          mode: memory.answerMode || settings.answerModeDefault,
+          projectId,
+          projectName,
+          customRules: memory.customRules,
+        });
+        return {
+          ok: true,
+          outcome: 'complete',
+          selected: { projectId, name: projectName },
+          answerModeConfigured: memory.answerMode !== '',
+          memoryOnboardingNeeded: memory.answerMode === '',
+          nextStep: memory.answerMode === ''
+            ? '这个项目还没定过回答方式：用 ask_user_question 问一次，候选用 modeOptions（先调 geo_memory read 拿）。'
+            : `开始运营即可。要取快照先调 geo_connection_status({ projectId: "${projectId}" })。`,
+        };
+      }
+
+      const projects = configured.map(project => {
+        const { memory } = readMemory(settings.memoryDirectory, project.projectId, nameOf(project));
+        return {
+          projectId: project.projectId,
+          name: nameOf(project) || memory.projectName,
+          active: project.projectId === active.projectId,
+          answerMode: memory.answerMode || settings.answerModeDefault,
+          answerModeConfigured: memory.answerMode !== '',
+          lastUsedAt: project.projectId === active.projectId ? active.at : 0,
+        };
+      });
+      const modeLabels = Object.fromEntries(projects
+        .filter(project => project.answerModeConfigured)
+        .map(project => [project.projectId, (MODE_CATALOG[project.answerMode] ?? MODE_CATALOG.brief).label]));
+
+      return {
+        ok: true,
+        outcome: 'complete',
+        count: projects.length,
+        projects,
+        activeProjectId: active.projectId,
+        memoryEnabled: settings.memoryEnabled !== false,
+        question: projects.length > 0 ? projectQuestion(projects, active.projectId, modeLabels) : undefined,
+        nextAction: projects.length === 0
+          ? '这个工作台还没绑定任何项目：让运营到 GEO 工作台的设置卡里添加项目编号与令牌，不要凭空猜编号。'
+          : '把 question 原样交给 ask_user_question 让运营挑一个；拿到项目编号后用 select 再调一次绑定。',
+        reason: projects.length > 0
+          ? `已绑定 ${projects.length} 个项目${active.projectId ? `，上次在运营 ${active.projectId}` : '，还没有选定当前项目'}。`
+          : '已绑定 0 个项目。',
+      };
+    },
+    presentationMeta: (args, value) => ({
+      kind: 'projects',
+      projectId: typeof value?.activeProjectId === 'string' ? value.activeProjectId : '',
+      selected: typeof value?.selected?.projectId === 'string' ? value.selected.projectId : '',
+      count: Number.isFinite(value?.count) ? value.count : 0,
+      outcome: typeof value?.outcome === 'string' ? value.outcome : 'unknown',
+    }),
+  }));
 
   ctx.tools.register(defineGeoTool({
     name: 'geo_api',
@@ -335,7 +778,7 @@ export function apply(ctx, config = {}) {
 
   ctx.tools.register(defineGeoTool({
     name: 'geo_list_evidence_files',
-    description: '列出投递目录里直接存放的 .doc、.docx、.pdf、.txt 文件。只返回文件名和字节大小，从不读取或返回文件正文。',
+    description: '列出资料暂存目录里直接存放的 .doc、.docx、.pdf、.txt 文件。只返回文件名和字节大小，从不读取或返回文件正文。运营把文件直接拖进对话时不必用它——那条路走 geo_upload_evidence 的 filePath。',
     parameters: {},
     async execute() {
       return listStagedEvidenceFiles(currentSettings().evidenceDirectory);
@@ -344,10 +787,11 @@ export function apply(ctx, config = {}) {
 
   ctx.tools.register(defineGeoTool({
     name: 'geo_upload_evidence',
-    description: '把投递目录里的一个资料文件上传到 GEO。只接受该目录下的单个文件，扩展名限 .doc、.docx、.pdf、.txt；绝对路径、跨目录、快捷方式一律拒绝。使用固定的上传接口，以及按文件内容生成的稳定幂等键。上传之前 DSH 会请操作员确认。',
+    description: '把一个资料文件上传到 GEO。给文件有两种方式：① 运营在对话里拖进来的文件——直接用消息里给出的保存路径（filePath），并带上原名（fileName），因为附件保存路径本身没有扩展名；② 暂存目录里的文件名（fileName），不需要 filePath。扩展名限 .doc、.docx、.pdf、.txt；目录、快捷方式、符号链接、空文件一律拒绝，不发出任何请求。上传之前 DSH 会请操作员确认。',
     parameters: {
       projectId: { type: 'string', required: true, description: '已存在的 GEO 项目编号。GEO 服务端会校验用户、租户和项目权限。' },
-      fileName: { type: 'string', required: true, description: 'geo_list_evidence_files 返回的确切文件名。' },
+      filePath: { type: 'string', description: '本地文件的绝对路径：运营在对话里拖进来的附件就用它（消息里会给出保存路径）。' },
+      fileName: { type: 'string', description: '资料的文件名（含扩展名）。与 filePath 一起用时它就是 GEO 侧看到的原名；只用 fileName、不传 filePath 时，从暂存目录里取这个文件。' },
       name: { type: 'string', description: '可选的资料显示名称，长度上限与接口契约一致。' },
       idempotencyKey: { type: 'string', description: '可选。要在恢复同一次上传或刻意再传一次时使用；默认按项目编号与文件内容生成一个稳定编号。' },
     },
@@ -419,6 +863,11 @@ export function apply(ctx, config = {}) {
     async execute({ projectId }) {
       const settings = currentSettings();
       const authStatus = await auth.status(projectId, settings);
+      // 令牌状态检查是运营每次开单的第一步，顺带把该项目的记忆读出来：
+      // 提示段立刻拿到正确的回答方式，也顺手告诉调用方「这个项目还没定过档位」。
+      const memory = normalizeProjectId(projectId) && settings.memoryEnabled !== false
+        ? loadProjectMemory(normalizeProjectId(projectId), settings)
+        : undefined;
       return {
         projectId: authStatus.projectId,
         projectConfigured: authStatus.projectConfigured,
@@ -430,11 +879,18 @@ export function apply(ctx, config = {}) {
         scopes: authStatus.scopes,
         expiresAt: authStatus.expiresAt,
         error: authStatus.error,
+        evidenceDirectory: typeof settings.evidenceDirectory === 'string' ? settings.evidenceDirectory : '',
         evidenceDirectoryConfigured: typeof settings.evidenceDirectory === 'string' && settings.evidenceDirectory.length > 0,
         exportDirectoryConfigured: typeof settings.exportDirectory === 'string' && settings.exportDirectory.length > 0,
         tokenValueExposed: false,
         operationCount: operationNames.length,
         catalogDigest: catalog.source.sha256,
+        // 记忆状态：回答方式没定过时，调用方应当先 ask_user_question 问一次。
+        memoryEnabled: settings.memoryEnabled !== false,
+        memoryAnswerMode: memory ? (memory.memory.answerMode || settings.answerModeDefault) : '',
+        memoryAnswerModeConfigured: memory ? memory.configured : false,
+        memoryOnboardingNeeded: memory ? !memory.configured : false,
+        memoryItemCount: memory ? memoryItemCount(memory.memory) : 0,
       };
     },
     // 令牌状态进投影：有效期只有 GEO 服务端知道，而客户端读不到凭据值、也不能
@@ -478,7 +934,122 @@ export function apply(ctx, config = {}) {
     },
   }));
 
+  ctx.tools.register(defineGeoTool({
+    name: 'geo_pet_control',
+    description: '报告「可爱大肥鱼桌宠」这个插件在当前 profile 里的状态：装没装、开着还是关着、这个开关是不是由 GEO 工作台代管的。它只读——要改状态请到 GEO 工作台的设置卡打开「桌宠」开关，工具不代替人改宿主配置。',
+    parameters: {},
+    async execute() {
+      const profileDir = profileDirectoryOf();
+      const patchPath = resolveProfilePatchPath({ profileDirectory: profileDir });
+      const state = await readPetManagedState(patchPath);
+      const enabled = currentSettings().petEnabled !== false;
+      const installed = petPluginInstalled(profileDir);
+      return {
+        ok: true,
+        outcome: 'complete',
+        plugin: MANAGED_PET_PLUGIN,
+        installed,
+        enabled,
+        disabledInProfile: state.disabled,
+        managedByGeoWorkbench: state.managed,
+        // 两处取值不一致说明 DSH 还没跑完那一次收敛（约 2 秒一轮）。
+        pendingConvergence: state.disabled === enabled,
+        profilePatchPath: patchPath,
+        error: state.error,
+        // 没装时把安装方式一并给出：运营问「桌宠呢」的时候，你不必再去找命令。
+        installCommand: installed ? '' : PET_INSTALL_COMMAND,
+        recommendInstall: !installed,
+      };
+    },
+    presentationMeta: (_args, value) => ({
+      kind: 'pet',
+      enabled: value?.enabled === true,
+      installed: value?.installed === true,
+      outcome: typeof value?.outcome === 'string' ? value.outcome : 'unknown',
+    }),
+  }));
+
   ctx.on('tools/pre-execute', (execution, next) => geoApprovalDecision(execution, next, catalog, currentSettings()));
+
+  // ── 提示词层：运营协议 + 当前回答模式 ────────────────────────────────────
+  // 这是「开场一定问一次、问过就不再问」里「一定」的那一半：协议常驻系统提示，
+  // 每个模型步骤都会读到；另一半（「不再问」）由记忆文件里的 modeAskedAt 保证。
+  //
+  // 软依赖，与下面的会话投影同构：宿主没有 systemPrompt 服务（测试桩、最小
+  // 组合）时只是不注入，工具与设置卡照常工作。
+  //
+  // 取值走 prompt variable 而不是把文本写死进段：段文本变了会让系统提示前缀
+  // 整体失效（KV cache），而运营切换回答方式是低频操作，变量插值既能让切换
+  // 立刻生效，又只在真的变了的时候才改动渲染结果。
+  if (typeof ctx.inject === 'function') {
+    ctx.inject(['systemPrompt'], (promptCtx) => {
+      const systemPrompt = promptCtx?.systemPrompt;
+      if (!systemPrompt || typeof systemPrompt.section !== 'function' || typeof systemPrompt.variable !== 'function') return;
+      // effect 的宿主可能是注入作用域、也可能只有根 ctx（测试桩即后者）；
+      // 两者都没有时直接调用——注册失败会由下面的 try/catch 兜住。
+      const effect = typeof promptCtx.effect === 'function'
+        ? (callback, label) => promptCtx.effect(callback, label)
+        : typeof ctx.effect === 'function'
+          ? (callback, label) => ctx.effect(callback, label)
+          : (callback) => callback();
+      try {
+        effect(
+          () => systemPrompt.variable('geo_operator_mode', () => modeDirective(modeState)),
+          'geo-workflow: operator mode variable',
+        );
+        effect(
+          () => systemPrompt.section({
+            name: MODE_SECTION_NAME,
+            order: MODE_SECTION_ORDER,
+            text: operatorProtocolSection(),
+          }),
+          'geo-workflow: operator protocol section',
+        );
+        // 职责范围：只有在它开启时才注入这一整段。它决定模型会不会顺手去写代码、
+        // 分析简历——关掉它，这个运行时就是一台普通 DSH（开发本插件时需要）。
+        if (scopeGuardEnabled()) {
+          effect(
+            () => systemPrompt.section({
+              name: SCOPE_GUARD_SECTION_NAME,
+              order: SCOPE_GUARD_SECTION_ORDER,
+              text: SCOPE_GUARD,
+            }),
+            'geo-workflow: scope guard section',
+          );
+        }
+      } catch (error) {
+        // 提示段只是「让 AI 知道运营要什么口吻」的增强；注入失败不该拖死宿主插件。
+        console.warn(`[geo-agent-dsh-plugin] 运营协议提示段注册失败，已降级为不注入：${error?.message ?? error}`);
+      }
+    });
+  }
+
+  // ── 人打的命令：/geo ─────────────────────────────────────────────────────
+  // 运营在输入框打 `/geo` 就能看到这个窗口绑了哪些项目、当前在运营哪一个，并且
+  // 可以当场切换。它不经过模型，所以比「说一句话等 AI 反应」更快也更可靠。
+  //
+  // 两条刻意的选择：
+  //   1. **软依赖**——宿主没有 commands 服务（headless、sdk-minimal）时只是没有
+  //      这条命令，工具与设置卡照常工作。
+  //   2. **不 import @deepseek-ai/dsh-commands**——它导出的 CommandDefinitionId()
+  //      只是把字符串原样返回、不做校验，而静态 import 会让这个包在模块加载期
+  //      变成硬依赖：宿主缺它时整个插件都装不上。用普通字符串即可。
+  if (typeof ctx.inject === 'function') {
+    ctx.inject(['commands'], (commandCtx) => {
+      const commands = commandCtx?.commands;
+      if (!commands || typeof commands.register !== 'function') return;
+      try {
+        commands.register({
+          name: 'geo',
+          description: '查看或切换这个窗口运营的 GEO 项目',
+          input: { hint: '[list|<项目编号>|help]' },
+          handler: invocation => runGeoCommand(invocation),
+        });
+      } catch (error) {
+        console.warn(`[geo-agent-dsh-plugin] /geo 命令注册失败，已降级为不注册：${error?.message ?? error}`);
+      }
+    });
+  }
 
   // 会话投影：把 GEO 工具调用折成业务阶段进度，工作台页据此画流程条。
   // inject 是软依赖：宿主（或测试桩）没有该方法、缺 sessionProjections
@@ -570,8 +1141,18 @@ export function apply(ctx, config = {}) {
             authenticated: z.boolean(),
             checkedAt: z.number(),
           })),
+          // 配套桌宠的状态：设置卡据此决定「显示开关」还是「推荐安装」。
+          // 它在 view 层而不是 state 层——state 每个会话只算一次，而运营改完开关
+          // 需要马上看到结果；view 每次读取都重新求值。
+          pet: z.strictObject({
+            installed: z.boolean(),
+            enabled: z.boolean(),
+            managedByGeoWorkbench: z.boolean(),
+            disabledInProfile: z.boolean(),
+            installCommand: z.string(),
+          }),
         }),
-        view: (state) => stageView(state),
+        view: (state) => ({ ...stageView(state), pet: currentPetState() }),
       },
       stateVersion: 5,
     });
@@ -650,9 +1231,13 @@ export function apply(ctx, config = {}) {
   ctx.effect(() => {
     const timer = setInterval(() => {
       const current = restrictToolsEnabled();
-      if (current === appliedRestriction) return;
-      appliedRestriction = current;
-      reconcileAgents();
+      if (current !== appliedRestriction) {
+        appliedRestriction = current;
+        reconcileAgents();
+      }
+      // 同一个轮询顺带收敛桌宠开关：两件事都是「volatile 配置 → 需要外部动作」，
+      // 再开一个 timer 只会让退出路径更难清干净。profile 位置拿不到时它立刻返回。
+      void reconcilePetSwitch();
     }, 2_000);
     // unref：轮询不阻塞进程退出（测试与无头场景都需要）。
     timer.unref?.();

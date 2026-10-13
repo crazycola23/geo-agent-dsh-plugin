@@ -62,9 +62,9 @@ test('精简：运行隔离区只保留标题与开关状态', () => {
 });
 
 test('精简：字段 label 去掉"（可选）"，改由 placeholder 与空值表达', () => {
-  assert.ok(!markup.includes('资料投递目录（可选）'));
+  assert.ok(!markup.includes('资料暂存目录（可选）'));
   assert.ok(!markup.includes('项目名称（可选）'));
-  assert.ok(markup.includes('资料投递目录'), '字段名本身必须保留');
+  assert.ok(markup.includes('资料暂存目录'), '字段名本身必须保留');
   assert.ok(markup.includes('项目名称'), '字段名本身必须保留');
 });
 

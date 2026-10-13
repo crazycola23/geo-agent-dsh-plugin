@@ -19,11 +19,27 @@ type CredentialRemote = {
 type ProjectSettings = { projectId: string; name?: string }
 type ProjectDraft = ProjectSettings & { draftKey: string; apiToken: string; persisted: boolean }
 type PolicyKey = 'factConfirmPolicy' | 'contentPrepPolicy' | 'contentGenerationPolicy' | 'detectionPolicy' | 'reportPolicy'
+
+/**
+ * 回答方式三档。顺序即推荐优先级：第一个同时是缺省值与提问时的推荐项。
+ * 文案与 src/operator-mode.js 的 MODE_CATALOG 是同义表述——那一份给模型，
+ * 这一份给运营；改一处务必同步另一处。
+ */
+const ANSWER_MODES: { key: string; name: string; scope: string }[] = [
+  { key: 'brief', name: '简洁模式', scope: '结论先行、编号步骤、单屏读完；不复述、不铺垫、不客套' },
+  { key: 'operator', name: '高级微调运营模式', scope: '专业但说业务语言：只讲结论、依据与下一步，不出现接口名、英文报错或技术方案' },
+  { key: 'standard', name: '标准模式', scope: '保留接口名、错误码、字段口径等技术细节，适合自己排查时用' },
+]
 type SettingsValue = {
   apiBaseUrl?: string
   apiBasePath?: string
   evidenceDirectory?: string
   exportDirectory?: string
+  memoryDirectory?: string
+  memoryEnabled?: boolean
+  answerModeDefault?: string
+  operatorIdentity?: string
+  petEnabled?: boolean
   timeoutMs?: number
   projects?: ProjectSettings[]
   restrictTools?: boolean
@@ -168,6 +184,8 @@ export function GeoSettingsCard(props: GeoSettingsCardProps): ReactNode {
   const value = snapshot.value ?? {}
   // 令牌有效期按项目取：数据来自该会话里最近一次 geo_connection_status 的真实结果。
   const geoView = useLatestGeoStage(sessions)
+  // 配套桌宠的状态同样走这条视图通道：装没装、开着没、是不是本工作台代管的。
+  const pet = geoView?.pet
   const tokenByProject = new Map<string, TokenStatus>(
     (geoView?.tokens ?? []).map(token => [token.projectId, token]),
   )
@@ -176,6 +194,7 @@ export function GeoSettingsCard(props: GeoSettingsCardProps): ReactNode {
   const [apiBasePath, setApiBasePath] = useState(value.apiBasePath ?? '')
   const [evidenceDirectory, setEvidenceDirectory] = useState(value.evidenceDirectory ?? '')
   const [exportDirectory, setExportDirectory] = useState(value.exportDirectory ?? '')
+  const [memoryDirectory, setMemoryDirectory] = useState(value.memoryDirectory ?? '')
   const [timeoutSeconds, setTimeoutSeconds] = useState(String(Math.round((value.timeoutMs ?? 30_000) / 1_000)))
   const [projects, setProjects] = useState(() => draftsFrom(value.projects))
   const [credentialState, setCredentialState] = useState<Record<string, CredentialInfo>>({})
@@ -191,6 +210,8 @@ export function GeoSettingsCard(props: GeoSettingsCardProps): ReactNode {
   const [tab, setTab] = useState<'connection' | 'runtime'>('connection')
   const [policyBusyKey, setPolicyBusyKey] = useState<PolicyKey | undefined>()
   const [policyError, setPolicyError] = useState<string | undefined>()
+  const [instantFieldBusy, setInstantFieldBusy] = useState(false)
+  const [memoryError, setMemoryError] = useState<string | undefined>()
   const nextDraftId = useRef(0)
 
   useEffect(() => {
@@ -199,9 +220,10 @@ export function GeoSettingsCard(props: GeoSettingsCardProps): ReactNode {
     setApiBasePath(value.apiBasePath ?? '')
     setEvidenceDirectory(value.evidenceDirectory ?? '')
     setExportDirectory(value.exportDirectory ?? '')
+    setMemoryDirectory(value.memoryDirectory ?? '')
     setTimeoutSeconds(String(Math.round((value.timeoutMs ?? 30_000) / 1_000)))
     setProjects(draftsFrom(value.projects))
-  }, [dirty, value.apiBaseUrl, value.apiBasePath, value.evidenceDirectory, value.exportDirectory, value.timeoutMs, value.projects])
+  }, [dirty, value.apiBaseUrl, value.apiBasePath, value.evidenceDirectory, value.exportDirectory, value.memoryDirectory, value.timeoutMs, value.projects])
 
   const refsInUse = projects.flatMap(project => validProjectId(project.projectId)
     ? Object.values(projectCredentialRefs(project.projectId.trim()))
@@ -342,6 +364,7 @@ export function GeoSettingsCard(props: GeoSettingsCardProps): ReactNode {
       await scope.set('apiBasePath', gatewayPrefix)
       await scope.set('evidenceDirectory', evidenceDirectory.trim())
       await scope.set('exportDirectory', exportDirectory.trim())
+      await scope.set('memoryDirectory', memoryDirectory.trim())
       await scope.set('timeoutMs', seconds * 1_000)
       await scope.set('projects', normalizedProjects)
       projectSettingsSaved = true
@@ -367,6 +390,7 @@ export function GeoSettingsCard(props: GeoSettingsCardProps): ReactNode {
       })))
       setEvidenceDirectory(evidenceDirectory.trim())
       setExportDirectory(exportDirectory.trim())
+      setMemoryDirectory(memoryDirectory.trim())
       setApiBaseUrl(origin)
       setApiBasePath(gatewayPrefix)
       setRemovedProjectIds([])
@@ -429,6 +453,29 @@ export function GeoSettingsCard(props: GeoSettingsCardProps): ReactNode {
     }
   }
 
+  // 项目记忆与缺省回答方式：与审批档位同一交互模式，写入即生效。
+  // 记忆是本插件按项目编号落盘的文件；缺省档位只在「该项目还没被问过」时作为推荐项出现。
+  const memoryEnabled = value.memoryEnabled !== false
+  const answerMode = ANSWER_MODES.some(mode => mode.key === value.answerModeDefault) ? (value.answerModeDefault as string) : 'brief'
+  // 职责范围：只有显式 'off' 才算关掉，与主进程侧的判定保持一致。
+  const operatorIdentity = value.operatorIdentity === 'off' ? 'off' : 'geo-only'
+  // 桌宠开关：默认开。关掉时主进程会在 profile 配置里代管一行 disabled。
+  const petEnabled = value.petEnabled !== false
+  // 拿不到视图（宿主没提供 sessions 服务）时按「装了」处理：宁可显示一个可能不生效的
+  // 开关，也不要把功能整个藏起来——藏起来运营根本不知道有这回事。
+  const petPresent = pet === undefined || pet.installed
+  const setMemoryField = async (field: 'memoryEnabled' | 'answerModeDefault' | 'operatorIdentity' | 'petEnabled', next: unknown): Promise<void> => {
+    setInstantFieldBusy(true)
+    setMemoryError(undefined)
+    try {
+      await scope.set(field, next)
+    } catch (error) {
+      setMemoryError(errorMessage(error))
+    } finally {
+      setInstantFieldBusy(false)
+    }
+  }
+
   return (
     <section className={styles.card} data-testid="geo-workbench-card">
       <button
@@ -479,10 +526,10 @@ export function GeoSettingsCard(props: GeoSettingsCardProps): ReactNode {
               onChange={(next) => { markDirty(); setApiBaseUrl(next) }}
             />
             <Field
-              label="资料投递目录"
-              hint="只有这个目录下的文档可以上传。"
+              label="资料暂存目录"
+              hint="可选。运营直接把文件拖进对话是主路径（推荐这样用）；这个目录只是给「文件已在本机某处、想按名字引用」留的落点"
               value={evidenceDirectory}
-              placeholder="D:\\geo-evidence"
+              placeholder="默认：DSH 数据目录下的 geo-evidence"
               testId="geo-evidence-directory"
               disabled={busy || !snapshot.writable}
               onChange={(next) => { markDirty(); setEvidenceDirectory(next) }}
@@ -495,6 +542,15 @@ export function GeoSettingsCard(props: GeoSettingsCardProps): ReactNode {
               testId="geo-export-directory"
               disabled={busy || !snapshot.writable}
               onChange={(next) => { markDirty(); setExportDirectory(next) }}
+            />
+            <Field
+              label="项目记忆目录"
+              hint="按项目编号分文件存放 AI 的操作习惯与回答方式；留空即用默认目录（DSH 数据目录下的 geo-memory）"
+              value={memoryDirectory}
+              placeholder="默认：DSH 数据目录下的 geo-memory"
+              testId="geo-memory-directory"
+              disabled={busy || !snapshot.writable}
+              onChange={(next) => { markDirty(); setMemoryDirectory(next) }}
             />
             <div className={styles.twoColumns}>
               <Field
@@ -639,6 +695,116 @@ export function GeoSettingsCard(props: GeoSettingsCardProps): ReactNode {
               </label>
             </div>
             {isolationError ? <p className={styles.inlineError}>{isolationError}</p> : null}
+          </div>
+
+          <div className={styles.section}>
+            <div className={styles.sectionHeading}>
+              <h3 className={styles.sectionTitle}>回答方式与项目记忆</h3>
+              <label className={styles.switch}>
+                <input
+                  className={styles.switchInput}
+                  type="checkbox"
+                  role="switch"
+                  checked={memoryEnabled}
+                  disabled={instantFieldBusy || !snapshot.writable}
+                  data-testid="geo-memory-enabled"
+                  onChange={(event) => { void setMemoryField('memoryEnabled', event.target.checked) }}
+                />
+                <span className={`${styles.switchTrack} ${memoryEnabled ? styles.switchTrackOn : ''}`} aria-hidden="true">
+                  <span className={styles.switchThumb} />
+                </span>
+                <span className={styles.switchLabel}>{memoryEnabled ? '记忆已开启 · 按项目分别保存' : '记忆已关闭 · 不再读写本地文件'}</span>
+              </label>
+            </div>
+            <p className={styles.hint}>
+              每个项目第一次开工时，AI 会用提问让你选一种回答方式，选择结果存在该项目自己的记忆文件里，之后不再重复问。
+              这里的「缺省回答方式」只在项目还没选过时作为推荐项出现。
+            </p>
+            <div className={styles.policyRow} data-testid="geo-operator-identity">
+              <div className={styles.policyMeta}>
+                <span className={styles.policyName}>职责范围</span>
+                <span className={styles.policyScope}>
+                  {operatorIdentity === 'geo-only'
+                    ? '只做 GEO 运营：写代码、分析简历、翻译、闲聊这类请求会被挡回并把话头引回项目'
+                    : '不限制：这个运行时也接受与 GEO 无关的通用请求（维护本插件时用）'}
+                </span>
+              </div>
+              <div className={styles.segmented} role="group" aria-label="职责范围">
+                <button
+                  className={operatorIdentity === 'geo-only' ? `${styles.segmentButton} ${styles.segmentButtonActive}` : styles.segmentButton}
+                  type="button"
+                  aria-pressed={operatorIdentity === 'geo-only'}
+                  data-testid="geo-operator-identity-geo-only"
+                  disabled={instantFieldBusy || !snapshot.writable}
+                  onClick={() => { void setMemoryField('operatorIdentity', 'geo-only') }}
+                >只做 GEO</button>
+                <button
+                  className={operatorIdentity === 'off' ? `${styles.segmentButton} ${styles.segmentButtonActive}` : styles.segmentButton}
+                  type="button"
+                  aria-pressed={operatorIdentity === 'off'}
+                  data-testid="geo-operator-identity-off"
+                  disabled={instantFieldBusy || !snapshot.writable}
+                  onClick={() => { void setMemoryField('operatorIdentity', 'off') }}
+                >不限制</button>
+              </div>
+            </div>
+            {ANSWER_MODES.map(({ key, name, scope }) => (
+              <div className={styles.policyRow} key={key} data-testid={`geo-answer-mode-${key}`}>
+                <div className={styles.policyMeta}>
+                  <span className={styles.policyName}>{name}</span>
+                  <span className={styles.policyScope}>{scope}</span>
+                </div>
+                <div className={styles.segmented} role="group" aria-label="缺省回答方式">
+                  <button
+                    className={answerMode === key ? `${styles.segmentButton} ${styles.segmentButtonActive}` : styles.segmentButton}
+                    type="button"
+                    aria-pressed={answerMode === key}
+                    data-testid={`geo-answer-mode-${key}-select`}
+                    disabled={instantFieldBusy || !snapshot.writable}
+                    onClick={() => { void setMemoryField('answerModeDefault', key) }}
+                  >{answerMode === key ? '缺省' : '设为缺省'}</button>
+                </div>
+              </div>
+            ))}
+            {memoryError ? <p className={styles.inlineError}>{memoryError}</p> : null}
+          </div>
+
+          <div className={styles.section} data-testid="geo-pet-section">
+            <div className={styles.sectionHeading}>
+              <h3 className={styles.sectionTitle}>桌宠</h3>
+              {petPresent ? (
+                <label className={styles.switch}>
+                  <input
+                    className={styles.switchInput}
+                    type="checkbox"
+                    role="switch"
+                    checked={petEnabled}
+                    disabled={instantFieldBusy || !snapshot.writable}
+                    data-testid="geo-pet-enabled"
+                    onChange={(event) => { void setMemoryField('petEnabled', event.target.checked) }}
+                  />
+                  <span className={`${styles.switchTrack} ${petEnabled ? styles.switchTrackOn : ''}`} aria-hidden="true">
+                    <span className={styles.switchThumb} />
+                  </span>
+                  <span className={styles.switchLabel}>{petEnabled ? '开着 · 跟着 AI 的工作状态动' : '已关闭 · 不再加载桌宠插件'}</span>
+                </label>
+              ) : (
+                <span className={styles.policyScope} data-testid="geo-pet-absent">这个 profile 里还没装</span>
+              )}
+            </div>
+            {petPresent ? (
+              <p className={styles.hint}>
+                关掉它 = 在本 profile 的配置里代管一行 disabled，由 DSH 自己热重载生效，不用重启；打开就把它撤掉。
+                桌宠显示的是这个会话的状态：思考中 / 干活中（带当前任务一句话）/ 等你回复 / 成功或失败——那行任务文字来自 AI 写的待办，不写就只会显示「干活中」。
+              </p>
+            ) : (
+              <p className={styles.hint}>
+                桌宠是独立插件，不跟这个工作台一起打包——想要就单独装：
+                <code className={styles.inlineCode} data-testid="geo-pet-install-command">{pet?.installCommand || 'dsh plugin add github:12we21/cute-fat-fish-pet'}</code>
+                装完重启一次 DSH，再回这张卡就会看到开关；它会把 AI 的工作状态显示在桌面上（思考中 / 干活中 / 等你回复 / 成功或失败）。
+              </p>
+            )}
+            {memoryError ? <p className={styles.inlineError}>{memoryError}</p> : null}
           </div>
 
           <div className={styles.section}>

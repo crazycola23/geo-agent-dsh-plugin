@@ -30,7 +30,15 @@ type TokenStatus = {
   authenticated: boolean
   checkedAt: number
 }
-type StageView = { stages?: StageRow[]; projects?: string[]; notes?: NoteRow[]; tokens?: TokenStatus[] }
+/** 配套桌宠的状态快照，由宿主侧的视图注入提供（见 index.js 的 wire.view）。 */
+type PetStatus = {
+  installed: boolean
+  enabled: boolean
+  managedByGeoWorkbench: boolean
+  disabledInProfile: boolean
+  installCommand: string
+}
+type StageView = { stages?: StageRow[]; projects?: string[]; notes?: NoteRow[]; tokens?: TokenStatus[]; pet?: PetStatus }
 
 /**
  * 令牌状态概要到人读文案：有效期 + 剩余天数 + 临期/过期告警。

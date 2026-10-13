@@ -1,6 +1,7 @@
 import Schema from '@deepseek-ai/schemastery';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { DEFAULT_ANSWER_MODE, isAnswerMode } from './operator-mode.js';
 
 /**
  * 导出目录的默认位置：跟 DSH 自己的数据同域，运营员不必先建目录才能用导出。
@@ -11,6 +12,32 @@ function defaultExportDirectory(env = process.env) {
     ? env.DSH_HOME.trim()
     : join(homedir(), '.dsh');
   return join(home, 'geo-articles');
+}
+
+/**
+ * 项目记忆目录的默认位置：同样跟 DSH 数据同域。每个项目一个 JSON 文件
+ * （<项目编号>.json），由 src/operator-memory.js 读写。
+ */
+function defaultMemoryDirectory(env = process.env) {
+  const home = typeof env.DSH_HOME === 'string' && env.DSH_HOME.trim() !== ''
+    ? env.DSH_HOME.trim()
+    : join(homedir(), '.dsh');
+  return join(home, 'geo-memory');
+}
+
+/**
+ * 资料暂存目录的默认位置。
+ *
+ * 约定大于配置：运营的日常是「把文件从对话框拖给 AI」，那条路走的是附件保存路径
+ * （见 api-client 的 openEvidencePath），根本用不到这个目录。它只是给「文件已经在
+ * 本机某处、想按名字引用」的情况留的落点，所以直接给默认值、不再要求人工配置——
+ * 一个空目录永远不会成为开工的前置条件。
+ */
+function defaultEvidenceDirectory(env = process.env) {
+  const home = typeof env.DSH_HOME === 'string' && env.DSH_HOME.trim() !== ''
+    ? env.DSH_HOME.trim()
+    : join(homedir(), '.dsh');
+  return join(home, 'geo-evidence');
 }
 
 const defaultTimeout = Number.isInteger(Number(process.env.GEO_API_TIMEOUT_MS))
@@ -29,11 +56,29 @@ export const Config = Schema.object({
   // 浏览器客户端原本不知道它存在，会直接请求 /geo/… 而拿到一个网页。
   // 留空表示「没有前缀」，适用于服务地址本身已经代理了接口路径的部署方式。
   apiBasePath: Schema.string().default(process.env.GEO_API_BASE_PATH ?? '').volatile(),
-  evidenceDirectory: Schema.string().default(process.env.GEO_EVIDENCE_DIRECTORY ?? '').volatile(),
+  // 只用于「按名字引用本机文件」这条次要路径：默认目录随主机解析，留空也照样可用。
+  // 主路径是运营在对话框里直接给文件，走附件保存路径，与本字段无关。
+  evidenceDirectory: Schema.string().default(process.env.GEO_EVIDENCE_DIRECTORY ?? defaultEvidenceDirectory()).volatile(),
   // 文章导出目录：geo_export_article 把稿件正文落成 .md 文件的地方。与投递目录
   // 分开配置——一个是往 GEO 送，一个是往本地取，方向相反，混用容易把待上传的
   // 资料和导出的稿件搅在一起。留空表示禁用导出工具。
   exportDirectory: Schema.string().default(process.env.GEO_EXPORT_DIRECTORY ?? defaultExportDirectory()).volatile(),
+  // 项目记忆目录：按项目编号分文件的持久化记忆落在这里。与导出目录分开——
+  // 那份是给运营看的稿件副本，这份是给 AI 读的操作习惯，生命周期完全不同。
+  memoryDirectory: Schema.string().default(process.env.GEO_MEMORY_DIRECTORY ?? defaultMemoryDirectory()).volatile(),
+  // 记忆总开关。关掉后 geo_memory 只报「已停用」，不读也不写本地文件。
+  memoryEnabled: Schema.boolean().default(true).volatile(),
+  // 新项目的缺省回答方式。已经选定过的项目以它自己记忆文件里的取值为准，
+  // 这个字段只在「该项目还没被问过」时作为推荐项出现。
+  answerModeDefault: Schema.string().default('brief').volatile(),
+  // 职责范围：'geo-only'（默认）时系统提示里常驻一段「这个工作台只做 GEO 运营」，
+  // 与 GEO 无关的通用请求（写代码、分析简历、翻译、闲聊）会被挡回并把话头引回项目。
+  // 显式填 'off' 关掉它——开发/维护这个插件本身的时候需要。
+  operatorIdentity: Schema.string().default('geo-only').volatile(),
+  // 桌宠开关：false 时这个插件会在 profile 的 cordis.patch.yml 里代管一行
+  // `id: cute-fat-fish-pet / disabled: true`，由 DSH 自己热重载生效。
+  // 默认 true，但默认**不写配置**——只有显式关过一次，代管块才会出现。
+  petEnabled: Schema.boolean().default(true).volatile(),
   timeoutMs: Schema.number().min(1_000).max(120_000).step(1_000).default(defaultTimeout).volatile(),
   // 工具隔离开关。开启（默认）时，这个 DSH 运行时里的每个智能体都只能看见本
   // 插件自己的工具——在专用的 GEO 环境里这是对的，装进共用环境则会连带屏蔽
@@ -73,6 +118,9 @@ export function pluginSettings(config = {}, env = process.env) {
   const configuredBasePath = currentValue(config.apiBasePath);
   const configuredEvidenceDirectory = currentValue(config.evidenceDirectory);
   const configuredExportDirectory = currentValue(config.exportDirectory);
+  const configuredMemoryDirectory = currentValue(config.memoryDirectory);
+  const configuredMemoryEnabled = currentValue(config.memoryEnabled);
+  const configuredAnswerMode = currentValue(config.answerModeDefault);
   const timeout = Number(currentValue(config.timeoutMs));
   const configuredProjects = currentValue(config.projects);
   const configuredRestrictTools = currentValue(config.restrictTools);
@@ -85,10 +133,23 @@ export function pluginSettings(config = {}, env = process.env) {
     basePath: typeof configuredBasePath === 'string' ? configuredBasePath.trim() : (env.GEO_API_BASE_PATH ?? ''),
     evidenceDirectory: typeof configuredEvidenceDirectory === 'string' && configuredEvidenceDirectory.trim() !== ''
       ? configuredEvidenceDirectory.trim()
-      : env.GEO_EVIDENCE_DIRECTORY,
+      : (env.GEO_EVIDENCE_DIRECTORY ?? defaultEvidenceDirectory(env)),
     exportDirectory: typeof configuredExportDirectory === 'string' && configuredExportDirectory.trim() !== ''
       ? configuredExportDirectory.trim()
       : (env.GEO_EXPORT_DIRECTORY ?? defaultExportDirectory(env)),
+    // 记忆目录留空时回落到默认位置，而不是「不写文件」——记忆是这个插件的
+    // 核心能力，配置漏填不该静默降级成无记忆。回落顺序与导出目录一致：
+    // 显式配置 > GEO_MEMORY_DIRECTORY > DSH_HOME 下的默认目录。
+    memoryDirectory: typeof configuredMemoryDirectory === 'string' && configuredMemoryDirectory.trim() !== ''
+      ? configuredMemoryDirectory.trim()
+      : (env.GEO_MEMORY_DIRECTORY ?? defaultMemoryDirectory(env)),
+    memoryEnabled: configuredMemoryEnabled === undefined ? true : Boolean(configuredMemoryEnabled),
+    answerModeDefault: isAnswerMode(configuredAnswerMode) ? configuredAnswerMode : DEFAULT_ANSWER_MODE,
+    // 只有显式 'off' 才关掉职责限制；其它任何取值（含脏值）一律按开启处理——
+    // 这里的方向是「宁可多限制」，与审批档位一致。
+    operatorIdentity: currentValue(config.operatorIdentity) === 'off' ? 'off' : 'geo-only',
+    // 桌宠开关默认开启；只有显式 false 才算关掉。
+    petEnabled: currentValue(config.petEnabled) === false ? false : true,
     timeoutMs: Number.isFinite(timeout) && timeout >= 1_000 && timeout <= 120_000
       ? timeout
       : defaultTimeout,

@@ -6,12 +6,14 @@ import { Config, pluginSettings } from '../src/config.js';
 
 // 导出目录有默认位置：未显式配置、也没有 DSH_HOME / GEO_EXPORT_DIRECTORY 时落到 ~/.dsh/geo-articles。
 const defaultExportDirectory = join(homedir(), '.dsh', 'geo-articles');
+// 项目记忆目录同理：~/.dsh/geo-memory，按项目编号分文件。
+const defaultMemoryDirectory = join(homedir(), '.dsh', 'geo-memory');
 import { normalizeBasePath } from '../src/api-client.js';
 
 test('DSH configuration schema exposes live endpoint, evidence directory, and timeout fields', () => {
   const schema = Config.toJSON();
   const objectNode = schema.refs[String(schema.uid)];
-  assert.deepEqual(Object.keys(objectNode.dict).sort(), ['apiBasePath', 'apiBaseUrl', 'contentGenerationPolicy', 'contentPrepPolicy', 'detectionPolicy', 'evidenceDirectory', 'exportDirectory', 'factConfirmPolicy', 'projects', 'reportPolicy', 'restrictTools', 'timeoutMs']);
+  assert.deepEqual(Object.keys(objectNode.dict).sort(), ['answerModeDefault', 'apiBasePath', 'apiBaseUrl', 'contentGenerationPolicy', 'contentPrepPolicy', 'detectionPolicy', 'evidenceDirectory', 'exportDirectory', 'factConfirmPolicy', 'memoryDirectory', 'memoryEnabled', 'operatorIdentity', 'petEnabled', 'projects', 'reportPolicy', 'restrictTools', 'timeoutMs']);
   for (const field of Object.values(objectNode.dict)) {
     assert.equal(schema.refs[String(field)].meta.volatile, true);
   }
@@ -31,6 +33,11 @@ test('settings resolve live DSH values and retain environment fallbacks', () => 
     basePath: '/prod-api',
     evidenceDirectory: 'D:\\geo-evidence',
     exportDirectory: defaultExportDirectory,
+    memoryDirectory: defaultMemoryDirectory,
+    memoryEnabled: true,
+    answerModeDefault: 'brief',
+    operatorIdentity: 'geo-only',
+    petEnabled: true,
     timeoutMs: 45_000,
     restrictTools: true,
     factConfirmPolicy: 'ask',
@@ -47,6 +54,11 @@ test('settings resolve live DSH values and retain environment fallbacks', () => 
     basePath: '',
     evidenceDirectory: 'D:\\staging',
     exportDirectory: defaultExportDirectory,
+    memoryDirectory: defaultMemoryDirectory,
+    memoryEnabled: true,
+    answerModeDefault: 'brief',
+    operatorIdentity: 'geo-only',
+    petEnabled: true,
     timeoutMs: 30_000,
     restrictTools: true,
     factConfirmPolicy: 'ask',
@@ -124,5 +136,34 @@ test('every delegation domain defaults to ask and honors only its own explicit o
     // Enabling one domain never widens another.
     assert.equal(pluginSettings({ detectionPolicy: 'agent' }).contentPrepPolicy, 'ask');
     assert.equal(pluginSettings({ reportPolicy: 'agent' }).detectionPolicy, 'ask');
+  }
+});
+
+test('the memory directory follows DSH_HOME and never silently degrades to "no memory"', () => {
+  assert.equal(pluginSettings({}, { DSH_HOME: '/opt/dsh' }).memoryDirectory, join('/opt/dsh', 'geo-memory'));
+  assert.equal(pluginSettings({}, { DSH_HOME: 'D:\\dsh' }).memoryDirectory, join('D:\\dsh', 'geo-memory'));
+  // 显式配置优先于环境变量，环境变量优先于默认值。
+  assert.equal(
+    pluginSettings({ memoryDirectory: { get: () => '/srv/memory' } }, { DSH_HOME: '/opt/dsh', GEO_MEMORY_DIRECTORY: '/mnt/memory' }).memoryDirectory,
+    '/srv/memory',
+  );
+  assert.equal(
+    pluginSettings({}, { DSH_HOME: '/opt/dsh', GEO_MEMORY_DIRECTORY: '/mnt/memory' }).memoryDirectory,
+    '/mnt/memory',
+  );
+  // 清空设置卡的字段不等于关掉记忆：回落到默认位置，仍然可读写。
+  assert.equal(
+    pluginSettings({ memoryDirectory: { get: () => '   ' } }, { DSH_HOME: '/opt/dsh' }).memoryDirectory,
+    join('/opt/dsh', 'geo-memory'),
+  );
+});
+
+test('the default answer mode is brief (the recommended one), and a bad value falls back instead of leaking into the prompt', () => {
+  assert.equal(pluginSettings({}).answerModeDefault, 'brief');
+  assert.equal(pluginSettings({ answerModeDefault: { get: () => 'operator' } }).answerModeDefault, 'operator');
+  assert.equal(pluginSettings({ answerModeDefault: 'standard' }).answerModeDefault, 'standard');
+  // 脏值不能进提示段：一律回落到缺省档位。
+  for (const bad of ['BRIEF', 'chatty', '', null, 42]) {
+    assert.equal(pluginSettings({ answerModeDefault: bad }).answerModeDefault, 'brief', String(bad));
   }
 });
