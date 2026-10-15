@@ -7,6 +7,9 @@ import { normalizeProjectId, projectCredentialRefs } from '../project-context.js
 // 这里复用工作台页的会话投影订阅，拿上一次真实校验留下的令牌状态。
 import { tokenSummary, useLatestGeoStage } from './GeoWorkbenchPage.tsx'
 import type { SessionsService, TokenStatus } from './GeoWorkbenchPage.tsx'
+// 运行环境判定与卡片必须同源：判定逻辑放在 shared 模块里，服务端半体与测试
+// 用的是同一份，卡片只负责把它渲染出来。
+import { RUNTIME_VERDICT, judgeRuntime, runtimeNotice } from '../runtime-compat.js'
 import styles from './geo-settings.module.css'
 
 type CredentialInfo = { configured?: boolean; writable?: boolean; source?: string }
@@ -31,6 +34,8 @@ const ANSWER_MODES: { key: string; name: string; scope: string }[] = [
   { key: 'standard', name: '标准模式', scope: '保留接口名、错误码、字段口径等技术细节，适合自己排查时用' },
 ]
 type SettingsValue = {
+  /** 服务端半体探测到的宿主 DSH 版本；浏览器里读不到 package.json，只能由它送过来。 */
+  runtimeVersion?: string
   apiBaseUrl?: string
   apiBasePath?: string
   evidenceDirectory?: string
@@ -63,7 +68,28 @@ export interface GeoSettingsCardProps {
   credentials?: CredentialRemote
   /** 软依赖：宿主没提供时，令牌有效期一栏退化为「未校验」，其余照常。 */
   sessions?: SessionsService
+  /**
+   * 运行环境探测（软依赖）。拿不到清单时返回空对象，卡片判成 unknown。
+   * 缺席时按「探测不到」处理，不当作正常。
+   */
+  runtimeProbe?: RuntimeProbe
+  /** 宿主是否给出了本条目的配置表单。false = 这一条没激活，卡片据此下结论。 */
+  hasConfigForm?: boolean
 }
+
+/** 探测结果：entries 缺席表示宿主没提供插件清单，不是「没有插件」。 */
+export type RuntimeProbeResult = { entries?: unknown[] }
+export type RuntimeProbe = () => Promise<RuntimeProbeResult>
+
+type RuntimeState = { verdict: string; detail: string }
+
+/** 需要立刻在卡片顶部示警的判定：这三类是「装了也用不了」。 */
+const ALERTING_VERDICTS: string[] = [
+  RUNTIME_VERDICT.FAILED,
+  RUNTIME_VERDICT.MISSING,
+  RUNTIME_VERDICT.DISABLED,
+  RUNTIME_VERDICT.UNSUPPORTED,
+]
 
 function normalizeBasePathInput(input: string): string {
   const value = input.trim()
@@ -212,6 +238,7 @@ export function GeoSettingsCard(props: GeoSettingsCardProps): ReactNode {
   const [policyError, setPolicyError] = useState<string | undefined>()
   const [instantFieldBusy, setInstantFieldBusy] = useState(false)
   const [memoryError, setMemoryError] = useState<string | undefined>()
+  const [runtime, setRuntime] = useState<RuntimeState | undefined>(undefined)
   const nextDraftId = useRef(0)
 
   useEffect(() => {
@@ -253,6 +280,29 @@ export function GeoSettingsCard(props: GeoSettingsCardProps): ReactNode {
     return () => { stale = true }
   }, [credentials, refsKey])
 
+  /**
+   * 运行环境判定。
+   *
+   * 探测失败不静默：拿不到清单时判成 unknown 并如实写在「运行环境」一栏，
+   * 而不是让卡片看起来一切正常 —— 版本问题最怕的就是静默通过。
+   */
+  useEffect(() => {
+    let stale = false
+    const hasConfigForm = props.hasConfigForm !== false
+    const runtimeVersion = typeof value.runtimeVersion === 'string' ? value.runtimeVersion : ''
+    const settle = (entries: unknown[] | undefined): void => {
+      if (!stale) setRuntime(judgeRuntime({ entries, hasConfigForm, runtimeVersion }))
+    }
+    if (!props.runtimeProbe) {
+      settle(undefined)
+      return () => { stale = true }
+    }
+    void props.runtimeProbe()
+      .then(result => settle(result?.entries))
+      .catch(() => settle(undefined))
+    return () => { stale = true }
+  }, [props.runtimeProbe, props.hasConfigForm, value.runtimeVersion])
+
   const configuredProjectCount = projects.filter(project => {
     if (!validProjectId(project.projectId)) return false
     const refs = projectCredentialRefs(project.projectId.trim())
@@ -260,6 +310,11 @@ export function GeoSettingsCard(props: GeoSettingsCardProps): ReactNode {
   }).length
   const endpointReady = apiBaseUrl.trim().length > 0
   const statusCopy = endpointReady && configuredProjectCount > 0 ? `待验证 · ${configuredProjectCount} 个项目` : '待配置'
+  const runtimeView = runtime ? runtimeNotice(runtime) : undefined
+  const detectedVersion = typeof value.runtimeVersion === 'string' ? value.runtimeVersion.trim() : ''
+  // 只有「装了也用不了」才在卡片顶部示警。unknown 只写在「运行」标签里 ——
+  // 探测不到不是故障，把它做成红条会训练运营忽略红条。
+  const runtimeAlert = runtime && ALERTING_VERDICTS.includes(runtime.verdict) ? runtimeView : undefined
 
   const markDirty = (): void => {
     setDirty(true)
@@ -493,6 +548,19 @@ export function GeoSettingsCard(props: GeoSettingsCardProps): ReactNode {
 
       {expanded ? (
         <div className={styles.body}>
+          {runtimeAlert ? (
+            <div
+              className={`${styles.runtimeBanner} ${runtimeAlert.tone === 'error' ? styles.runtimeBannerError : styles.runtimeBannerWarn}`}
+              role="alert"
+              data-testid="geo-runtime-banner"
+            >
+              <strong className={styles.runtimeBannerTitle}>{runtimeAlert.title}</strong>
+              <span className={styles.runtimeBannerDetail}>{runtimeAlert.detail}</span>
+              {runtime?.detail ? (
+                <code className={styles.runtimeBannerRaw} data-testid="geo-runtime-banner-raw">{runtime.detail}</code>
+              ) : null}
+            </div>
+          ) : null}
           <div className={styles.tabs} role="tablist" data-testid="geo-settings-tabs">
             <button
               className={tab === 'connection' ? `${styles.tab} ${styles.tabActive}` : styles.tab}
@@ -675,6 +743,30 @@ export function GeoSettingsCard(props: GeoSettingsCardProps): ReactNode {
             </>
           ) : (
             <>
+          <div className={styles.section} data-testid="geo-runtime-section">
+            <div className={styles.sectionHeading}>
+              <h3 className={styles.sectionTitle}>运行环境</h3>
+              <span
+                className={`${styles.badge} ${runtime?.verdict === RUNTIME_VERDICT.ACTIVE ? styles.badgeReady : ''}`}
+                data-testid="geo-runtime-verdict"
+              >
+                <span className={styles.stateDot} />
+                {runtime?.verdict === RUNTIME_VERDICT.ACTIVE
+                  ? '正常'
+                  : runtime?.verdict === RUNTIME_VERDICT.UNSUPPORTED
+                    ? '未验证'
+                  : (!runtime || runtime.verdict === RUNTIME_VERDICT.UNKNOWN ? '检测不到' : '不可用')}
+              </span>
+            </div>
+            <p className={styles.hint}>
+              {detectedVersion ? `宿主 DSH ${detectedVersion}。` : ''}
+              {runtimeView ? runtimeView.detail : '正在检测运行环境…'}
+            </p>
+            {runtime?.detail ? (
+              <p className={styles.inlineError} data-testid="geo-runtime-error">{runtime.detail}</p>
+            ) : null}
+          </div>
+
           <div className={styles.section}>
             <div className={styles.sectionHeading}>
               <h3 className={styles.sectionTitle}>运行隔离</h3>

@@ -7,6 +7,8 @@ description: Run internal GEO operations through the authenticated DSH GEO tools
 
 先确认用户指定的 GEO 项目 ID；存在多个项目且用户没有指定时，先询问，不自行选择。对目标项目调用 `geo_connection_status({ projectId })` 验证该项目 API 令牌的绑定项目、权限码和有效期。认证失败时停止并提示管理员检查隔离 profile 的 GEO 工作台项目凭据，以及该项目负责人是否仍具备对应权限，不要尝试浏览器登录或索取员工密码。调用 `geo_api` 时始终传同一目标 `projectId`；若业务请求本身也有 `projectId`，两者必须一致。先阅读 [workflow.md](references/workflow.md)；遇到授权、费用、事实确认、检测、发布或报告生成时，按其中的人工作业节点停下。工具参数以 `geo_describe_operation` 和当前 GEO 响应为准；完整操作目录见 [capability-map.md](references/capability-map.md)。
 
+运营说「卡片报错 / 工具没出来 / 装完没反应」时，第一件事是 `geo_runtime_status`（只读、不发网络请求）：它给出宿主 DSH 版本、本插件验证过的范围、以及当前版本是否在范围内。返回里 `verified: false` 表示版本超出验证范围 —— 如实告诉运营，不要拿它当正常运行继续干活；`runtimeVersionDetected: false` 表示读不到版本，同样照实说。
+
 ## 开场：先定项目，再读记忆，没定过档位就先问一次
 
 **每个项目第一次进都要走这一步**，顺序不能颠倒——项目决定用哪套数据，档位决定你之后所有交付的写法。
@@ -154,6 +156,7 @@ schedule_create({
 
 ## 参考
 
+- **安装与配置文档**：由服务方单独分发，**不在本仓库**（其中含模型服务的密钥）。运营问「怎么开始 / 怎么装 / 我该填什么」时，让他找服务方要这份《安装与配置》文档，不要自己现编步骤。
 - 全流程、业务确认点与首版边界：[workflow.md](references/workflow.md)
 - 自动跑单（OpsRun）触发、感知清单与决策单审批：[auto-run.md](references/auto-run.md)
 - 运营员 UI 流程速查与术语映射（API↔界面差异）：[ui-flow.md](references/ui-flow.md)

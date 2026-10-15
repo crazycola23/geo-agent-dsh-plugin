@@ -2,6 +2,7 @@ import Schema from '@deepseek-ai/schemastery';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { DEFAULT_ANSWER_MODE, isAnswerMode } from './operator-mode.js';
+import { detectRuntimeVersion } from './runtime-version.js';
 
 /**
  * 导出目录的默认位置：跟 DSH 自己的数据同域，运营员不必先建目录才能用导出。
@@ -50,6 +51,10 @@ const defaultTimeout = Number.isInteger(Number(process.env.GEO_API_TIMEOUT_MS))
  * 插件配置页里可以改的字段。连接凭据刻意不放在这张表单里，而是存在 DSH 凭据里。
  */
 export const Config = Schema.object({
+  // 宿主 DSH 版本。客户端半体跑在浏览器里，读不到任何 package.json —— 版本只能
+  // 由服务端半体探测后经这份配置快照送到卡片，卡片据此判断「这一行验证过没有」。
+  // 它没有对应的输入控件：这是事实上报，不是可配置项。
+  runtimeVersion: Schema.string().default(detectRuntimeVersion()).volatile(),
   apiBaseUrl: Schema.string().default(process.env.GEO_API_BASE_URL ?? '').volatile(),
   // 转发路径前缀：夹在服务地址与接口路径之间的那一段。网页端部署常把接口调用
   // 转到 /prod-api 这类前缀后面，免得被单页应用的回退路由吞掉；本插件这种非

@@ -13,7 +13,9 @@ import { normalizeBasePath } from '../src/api-client.js';
 test('DSH configuration schema exposes live endpoint, evidence directory, and timeout fields', () => {
   const schema = Config.toJSON();
   const objectNode = schema.refs[String(schema.uid)];
-  assert.deepEqual(Object.keys(objectNode.dict).sort(), ['answerModeDefault', 'apiBasePath', 'apiBaseUrl', 'contentGenerationPolicy', 'contentPrepPolicy', 'detectionPolicy', 'evidenceDirectory', 'exportDirectory', 'factConfirmPolicy', 'memoryDirectory', 'memoryEnabled', 'operatorIdentity', 'petEnabled', 'projects', 'reportPolicy', 'restrictTools', 'timeoutMs']);
+  // runtimeVersion 是服务端半体探测到的事实（浏览器读不到 package.json），
+  // 经这份配置快照送到卡片，卡片据此判断 DSH 版本在不在验证范围内。
+  assert.deepEqual(Object.keys(objectNode.dict).sort(), ['answerModeDefault', 'apiBasePath', 'apiBaseUrl', 'contentGenerationPolicy', 'contentPrepPolicy', 'detectionPolicy', 'evidenceDirectory', 'exportDirectory', 'factConfirmPolicy', 'memoryDirectory', 'memoryEnabled', 'operatorIdentity', 'petEnabled', 'projects', 'reportPolicy', 'restrictTools', 'runtimeVersion', 'timeoutMs']);
   for (const field of Object.values(objectNode.dict)) {
     assert.equal(schema.refs[String(field)].meta.volatile, true);
   }

@@ -46,6 +46,15 @@ import {
   resolveProfilePatchPath,
   setPetDisabled,
 } from './pet-control.js';
+import {
+  PEER_DSH_RANGE,
+  PLUGIN_PACKAGE,
+  REQUIRED_DSH_PEERS,
+  VERIFIED_DSH_RANGE,
+  runtimeVersionSupported,
+} from './runtime-compat.js';
+import { detectRuntimeVersion } from './runtime-version.js';
+import { ensureGeoSkillInstalled } from './skill-install.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const catalog = JSON.parse(readFileSync(resolve(here, 'generated', 'openapi.catalog.json'), 'utf8'));
@@ -76,6 +85,7 @@ const toolNames = [
   'geo_clear_progress',
   'geo_connection_status',
   'geo_approval_policy',
+  'geo_runtime_status',
   'geo_pet_control',
   'ask_user_question',
 ];
@@ -324,6 +334,10 @@ export function apply(ctx, config = {}) {
   }
 
   const currentSettings = () => pluginSettings(config);
+
+  // 流程技能随包分发，但 DSH 的 skill 只从文件系统目录发现 —— 插件包目录不在其中。
+  // 不自动装的话，运营拿到的是「一堆工具 + 没有流程规程」。失败只告警，不拖累工具。
+  void ensureGeoSkillInstalled({ pluginRoot: resolve(here, '..') });
   // 转发路径前缀是单个实例的配置，不属于接口契约，所以它通过配置快照同时传到
   // 接口客户端和令牌校验两处。
   // profile 目录：桌宠开关要写的就是这个 profile 的 patch 文件。
@@ -932,6 +946,41 @@ export function apply(ctx, config = {}) {
         note: 'ask = 每次写入都弹 DSH 审批；agent = 由智能体自行判断；其它取值一律按 ask 处理。改档位请到 GEO 工作台的设置卡「运行」标签，不能用工具改。内容注入写入始终由人工发起（见 injectionAlwaysAsk）。',
       };
     },
+  }));
+
+  ctx.tools.register(defineGeoTool({
+    name: 'geo_runtime_status',
+    description: '报告宿主 DSH 的运行时版本，以及本插件要求的版本范围。只读、不发网络请求。运营说「卡片报错 / 工具没出来 / 装完没反应」时先调它，用返回值判断是不是版本不合适，不要让运营自己去翻日志。',
+    parameters: {},
+    async execute() {
+      const runtimeVersion = detectRuntimeVersion();
+      const verified = runtimeVersionSupported(runtimeVersion);
+      return {
+        ok: true,
+        outcome: 'complete',
+        plugin: PLUGIN_PACKAGE,
+        runtimeVersion,
+        runtimeVersionDetected: runtimeVersion !== '',
+        verifiedRange: VERIFIED_DSH_RANGE,
+        peerRange: PEER_DSH_RANGE,
+        // true / false / undefined（undefined = 读不到版本，不是「通过」）。
+        verified,
+        requiredPeers: [...REQUIRED_DSH_PEERS],
+        // 能走到这里就说明服务端半体是活的，但「活着」不等于「版本在范围内」——
+        // peer 范围刻意放宽到「只要不比验证下限更旧就加载」，范围外的实例照常运行。
+        active: true,
+        note: runtimeVersion === ''
+          ? `读不到宿主 DSH 版本；插件只在 ${VERIFIED_DSH_RANGE} 上验证过。`
+          : `宿主 DSH ${runtimeVersion}；插件只在 ${VERIFIED_DSH_RANGE} 上验证过。${
+              verified === false ? '当前版本超出验证范围：工具能不能用没有保证，出问题时优先换回验证过的版本。' : ''}`,
+      };
+    },
+    presentationMeta: (_args, value) => ({
+      kind: 'runtime',
+      outcome: typeof value?.outcome === 'string' ? value.outcome : 'unknown',
+      runtimeVersion: typeof value?.runtimeVersion === 'string' ? value.runtimeVersion : '',
+      verified: value?.verified === true,
+    }),
   }));
 
   ctx.tools.register(defineGeoTool({

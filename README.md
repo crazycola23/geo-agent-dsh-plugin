@@ -10,7 +10,7 @@ Native DeepSeek Harness tools for the internal GEO workflow. It calls GEO's exis
 
 **前置条件**
 
-- DeepSeek Harness `0.2.0-rc.2`（`peerDependencies` 锁定这一版）
+- DeepSeek Harness `0.2.x`（验证于 `0.2.0-rc.2`；`peerDependencies` 放宽到 `>=0.2.0-rc.2`，理由见「兼容性」）
 - Node.js `>= 22.19`
 - **一个可访问的 GEO 服务**：本插件只是 DSH 侧的客户端，没有 GEO 后端就没有可执行的操作
 
@@ -72,7 +72,7 @@ dsh plugin --profile <profile> add github:crazycola23/geo-agent-dsh-plugin
 
 ## 兼容性与行为
 
-- DeepSeek Harness `0.2.0-rc.2`
+- DeepSeek Harness `0.2.x`（验证于 `0.2.0-rc.2`）
 - Node.js `>=22.19`
 - The package includes a DSH-native **GEO 工作台** configuration card under the plugin's settings page.
 - GEO project API tokens per D-20261001-02: the plugin sends the project's `geop_` bearer directly; there is no token exchange
@@ -86,6 +86,7 @@ Install this package in an isolated DSH profile, then fill in the GEO service ad
 - `geo_api`: call one exact operation from the generated GEO OpenAPI catalog. Supply the target `projectId`; the plugin uses that project's API token and rejects requests whose path/query/body project ID differs. The selector is not added to the business request. The plugin validates path/query/body fields and refuses arbitrary hosts, headers, or undeclared fields.
 - `geo_describe_operation`: inspect the current generated method, route, request schema, permission, and idempotency rule.
 - `geo_approval_policy`: read this plugin approval configuration (no network call) — per-domain write policy (ask = DSH approval per write, agent = agent judgment), the operations each domain covers, writes that always require approval (publish confirm-class, evidence upload, content injection), always-allowed query POSTs, and tool isolation state. Changing policies happens in the settings card, never through tools.
+- `geo_runtime_status`: report the host DSH version this plugin detected, the range it was verified against, and whether the current version is inside it (no network call). This is the first call when an operator says the card errors, the tools are missing, or an install "did nothing" — the same facts the card's 运行环境 line shows.
 - `geo_list_evidence_files`: list allowed evidence file names and sizes from the staging folder; it never reads or returns their contents. The staging folder is optional — the main path is the operator dropping a file into the conversation.
 - `geo_upload_evidence`: upload one document to the canonical multipart route. Two ways to point at the file: `filePath` (the attachment path DSH prints in the message when the operator drags a file into the conversation, plus `fileName` for the original name, since attachment objects are content-addressed and carry no extension) or `fileName` alone (a direct child of the staging folder). Directories, symlinks, empty files, files over 50 MB, and unsupported extensions are rejected before any request goes out.
 - `geo_connection_status`: test one selected project's API token and report its bound project, token name, scopes and expiry without revealing the bearer. It also reports the project's memory state (`memoryOnboardingNeeded`, `memoryAnswerMode`), so one call is enough to know whether the answer mode still has to be asked.
@@ -185,23 +186,23 @@ Writing rules, because this edits host configuration: only the marked block is t
 
 ### DSH runtime versions
 
-DSH checks a plugin's `peerDependencies` for `@deepseek-ai/dsh` and `@deepseek-ai/dsh-*` before it imports the plugin, comparing each declared range against `getDshRuntimeVersion()`. Prereleases take part in matching. A mismatch rejects the plugin **before any module is imported**, so the plugin never runs half-loaded.
+DSH checks a plugin's `peerDependencies` for `@deepseek-ai/dsh` and `@deepseek-ai/dsh-*` before it imports the plugin, comparing each declared range against `getDshRuntimeVersion()`. Prereleases take part in matching. A mismatch rejects the plugin **before any module is imported** — and that rejection takes the **client half down with it**: the bundle never loads, so the settings card cannot render at all. On the host you get the plugin marked 异常 plus DSH's own reason line, and nothing else (2026-10-15 实测：不兼容时插件详情页显示「这个插件包不包含任何组件」)。
 
-This plugin declares `^0.2.0-rc.2` for `@deepseek-ai/dsh-tools` and `@deepseek-ai/dsh-credentials`. Verified with DSH's own evaluator:
+That is why this plugin declares a deliberately **wide** peer range — `>=0.2.0-rc.2` for `@deepseek-ai/dsh-tools` and `@deepseek-ai/dsh-credentials` — and does its own version detection instead:
 
-| Runtime | Outcome |
-|---|---|
-| 0.2.0-rc.1 | rejected (older than the declared floor) |
-| 0.2.0-rc.2 · rc.3 · 0.2.0 · 0.2.1 · 0.2.9 | **accepted, no exemption needed** |
-| 0.3.0 · 1.0.0 | rejected — re-evaluate the plugin API before widening |
+- the **server half** reads the runtime version the same way DSH does (`@deepseek-ai/dsh-app-boot`'s `package.json`, falling back to `@deepseek-ai/dsh-tools`) and passes it to the card through the config snapshot;
+- the **card** shows a 运行环境 line in its 运行 tab and raises a red banner above the tabs when the version is outside the verified line;
+- the **`geo_runtime_status` tool** reports the same facts to the agent, so「卡片报错 / 工具没出来」can be answered in one call.
 
-`^0.2.0-rc.2` deliberately stops at the minor boundary: within 0.2.x the plugin API is stable, but across a minor in a 0.x line the services this plugin uses (`ctx.tools`, `ctx.agents`, `ctx.credentials`, `ctx.systemPrompt`, `sessionProjections`) can change. Being refused loudly beats crashing at runtime. To cross that line on purpose:
+Verified line (what this plugin actually tests against): `^0.2.0-rc.2`, i.e. DSH **0.2.x**, prereleases included.
 
-```powershell
-dsh plugin allow-version "@geo-internal/geo-agent-dsh-plugin@0.1.0" --dsh-version 0.3.0 --accept-risk
-```
+| Runtime | Peer gate | What the card says |
+|---|---|---|
+| 0.2.0-rc.1 | rejected (older than the floor) | cannot render — DSH refuses the whole bundle |
+| 0.2.0-rc.2 · rc.3 · 0.2.0 · 0.2.1 · 0.2.9 | accepted | 正常 |
+| 0.3.0 · 1.0.0 | **accepted** (wide range) | red banner: outside the verified line |
 
-Exemptions live in the profile's own `compatibility.json`, name one exact `package@version` plus one exact runtime version, and are **not inherited** by plugin or DSH upgrades — each new pair needs its own grant. Declaring no DSH peer at all would remove the check entirely; this plugin keeps the check on purpose.
+The trade-off is deliberate. A hard refusal is unactionable: the operator sees 异常 and has no way to learn which version to install, and our own card is exactly what gets taken away. Loading with a visible warning keeps the failure legible. The plugin still fails closed at the service level — `apply()` throws a named error when the runtime lacks `ctx.tools` / `ctx.agents` / the lifecycle hooks, so an unknown version stops at "this entry did not activate" instead of taking the host down.
 
 Re-verify after touching `peerDependencies`:
 

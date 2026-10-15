@@ -221,6 +221,48 @@
   gap: 12px;
 }
 
+/* 运行环境告警条：装在卡片顶部、两个标签之上。版本不合适时运营打开卡片第一眼
+   就要看到，不必先切到「运行」标签；只有「装了也用不了」才用它，探测不到不用，
+   否则红条会被训练成噪音。 */
+.runtimeBanner {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.runtimeBannerError {
+  color: var(--dsw-alias-state-error-primary, #d1242f);
+  border-color: var(--dsw-alias-state-error-primary, #d1242f);
+  background: color-mix(in srgb, var(--dsw-alias-state-error-primary, #d1242f) 8%, transparent);
+}
+
+.runtimeBannerWarn {
+  color: var(--dsw-alias-state-warning-primary, #9a6700);
+  border-color: var(--dsw-alias-state-warning-primary, #9a6700);
+  background: color-mix(in srgb, var(--dsw-alias-state-warning-primary, #9a6700) 8%, transparent);
+}
+
+.runtimeBannerTitle {
+  font-weight: 600;
+}
+
+.runtimeBannerDetail {
+  color: inherit;
+}
+
+/* DSH 自己记下的激活错误原文：不翻译、不截断，排障时它是唯一的一手信息。 */
+.runtimeBannerRaw {
+  font-family: var(--dsw-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+  opacity: 0.85;
+}
+
 .inlineError,
 .failure {
   margin: 0;

@@ -229,12 +229,12 @@ test('plugin registers the generated API surface and restricts each agent to GEO
   assert.equal(warnings.length, 1);
   assert.match(warnings[0], /工具隔离已生效/);
   assert.match(warnings[0], /restrictTools/);
-  assert.deepEqual(registered.map(tool => tool.name), ['geo_memory', 'geo_projects', 'geo_api', 'geo_describe_operation', 'geo_list_evidence_files', 'geo_upload_evidence', 'geo_export_article', 'geo_progress_note', 'geo_clear_progress', 'geo_connection_status', 'geo_approval_policy', 'geo_pet_control']);
+  assert.deepEqual(registered.map(tool => tool.name), ['geo_memory', 'geo_projects', 'geo_api', 'geo_describe_operation', 'geo_list_evidence_files', 'geo_upload_evidence', 'geo_export_article', 'geo_progress_note', 'geo_clear_progress', 'geo_connection_status', 'geo_approval_policy', 'geo_runtime_status', 'geo_pet_control']);
   // schedule_* 不在清单里：dsh-schedule 把它们注册在每个 agent 自己的作用域，
   // 而 restrict() 的 allow 只接受 inherited/global 工具名，写进去会抛
   // "names unknown global tools" 并把宿主拖死（2026-10-09 实测崩溃的根因）。
   // 隔离只过滤 inherited 面，agent 自己的注册不受影响，所以不列也照样可用。
-  const expectedRestriction = { allow: ['geo_memory', 'geo_projects', 'geo_api', 'geo_describe_operation', 'geo_list_evidence_files', 'geo_upload_evidence', 'geo_export_article', 'geo_progress_note', 'geo_clear_progress', 'geo_connection_status', 'geo_approval_policy', 'geo_pet_control', 'ask_user_question'] };
+  const expectedRestriction = { allow: ['geo_memory', 'geo_projects', 'geo_api', 'geo_describe_operation', 'geo_list_evidence_files', 'geo_upload_evidence', 'geo_export_article', 'geo_progress_note', 'geo_clear_progress', 'geo_connection_status', 'geo_approval_policy', 'geo_runtime_status', 'geo_pet_control', 'ask_user_question'] };
   assert.deepEqual(existing.state.restriction, expectedRestriction);
   assert.equal(events.has('tools/pre-execute'), true);
   assert.equal(events.has('agent/created'), true);
@@ -299,7 +299,7 @@ test('restrictTools false keeps the GEO tools but never restricts an agent', () 
   // No isolation means no isolation notice.
   assert.equal(warnings.length, 0);
   // The tool surface is identical to the isolating configuration …
-  assert.deepEqual(registered.map(tool => tool.name), ['geo_memory', 'geo_projects', 'geo_api', 'geo_describe_operation', 'geo_list_evidence_files', 'geo_upload_evidence', 'geo_export_article', 'geo_progress_note', 'geo_clear_progress', 'geo_connection_status', 'geo_approval_policy', 'geo_pet_control']);
+  assert.deepEqual(registered.map(tool => tool.name), ['geo_memory', 'geo_projects', 'geo_api', 'geo_describe_operation', 'geo_list_evidence_files', 'geo_upload_evidence', 'geo_export_article', 'geo_progress_note', 'geo_clear_progress', 'geo_connection_status', 'geo_approval_policy', 'geo_runtime_status', 'geo_pet_control']);
   // … but nothing is masked, for the existing agent or any later one.
   assert.equal(state.restriction, undefined);
   events.get('agent/created')({ agent: makeAgent() });
