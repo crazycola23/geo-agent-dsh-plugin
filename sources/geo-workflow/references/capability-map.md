@@ -1,10 +1,10 @@
 # GEO 工具覆盖目录（自动生成）
 
-OpenAPI SHA-256：`d2fab6d270b61592e40951d86edc54d9a2e8aa74912b0a2048d772f90e6b0664`
+OpenAPI SHA-256：`f189c48a0c5278328bfa774847bded534c1f00f31391fde351c5dd139567c206`
 
 端点来自 `scrm-specs/30-contracts/08-openapi.yaml`。修改该契约后，在插件目录执行 `npm run generate:catalog`；不要手改下列清单或 `src/generated/openapi.catalog.json`。生成器会验证路由名冲突与请求体引用。
 
-当前纳入 153 个操作，排除 68 个操作。GET 只读；其余请求必须通过 DSH 操作员审批后才发出。所有后端权限仍由 GEO 校验。
+当前纳入 154 个操作，排除 70 个操作。GET 只读；其余请求必须通过 DSH 操作员审批后才发出。所有后端权限仍由 GEO 校验。
 
 ## agent（4）
 
@@ -111,7 +111,7 @@ OpenAPI SHA-256：`d2fab6d270b61592e40951d86edc54d9a2e8aa74912b0a2048d772f90e6b0
 | get_article_versions | GET | /article-versions | geo:content:view | — | 稿件版本列表（S08 Tab2） |
 | get_article_versions_by_id | GET | /article-versions/{id} | geo:content:view | — | 文章记录详情（M08） |
 | put_article_versions_by_id | PUT | /article-versions/{id} | geo:content:create | required: source Article + action + version | 修改稿件（产生新版本） |
-| post_article_versions_by_id_archive | POST | /article-versions/{id}/archive | geo:content:create | required: source Article + archive + version | 归档文章 |
+| post_article_versions_by_id_archive | POST | /article-versions/{id}/archive | geo:content:create | required: source Article + archive + version | 归档稿件版本 |
 | post_article_versions_by_id_enable | POST | /article-versions/{id}/enable | geo:content:create | required: source Article + enable + version | 启用文章 |
 | post_article_versions_by_id_disable | POST | /article-versions/{id}/disable | geo:content:create | required: source Article + disable + version | 禁用文章 |
 | put_article_versions_by_id_draft | PUT | /article-versions/{id}/draft | geo:content:create | — | 保存我的稿件草稿 |
@@ -140,6 +140,14 @@ OpenAPI SHA-256：`d2fab6d270b61592e40951d86edc54d9a2e8aa74912b0a2048d772f90e6b0
 | post_publish_records_manual | POST | /publish-records/manual | geo:publish:confirm | required: article_version_id + publish_target_id + publish_intent=initial | 人工发布登记 |
 | post_publish_records_by_id_cancel | POST | /publish-records/{id}/cancel | geo:publish:cancel | required: PublishRecord + current status + action + reason | 取消 / 申诉 |
 | post_publish_records_by_id_republish | POST | /publish-records/{id}/republish | geo:publish:republish | required: source PublishRecord + articleVersionId + reason | 重新发布（新建 PublishRecord）⚠ 高风险 |
+
+## cost（3）
+
+| 工具操作名 | 方法 | 路由 | 业务权限 | 幂等约束 | 描述 |
+|---|---|---|---|---|---|
+| get_publish_bill | GET | /publish-bill | geo:budget:view | — | 渠道账单（S13 B 区） |
+| get_budget_buckets | GET | /budget/buckets | geo:budget:view | — | 预算桶（S13） |
+| get_expense_ledger | GET | /expense-ledger | geo:budget:view | — | 费用台账（S13） |
 
 ## detect（17）
 
@@ -192,13 +200,6 @@ OpenAPI SHA-256：`d2fab6d270b61592e40951d86edc54d9a2e8aa74912b0a2048d772f90e6b0
 | get_customer_geo_reports_by_reportid_html | GET | /customer-geo-reports/{reportId}/html | geo:report:view | — | 受控预览 OneGl HTML 客户报告 |
 | post_customer_geo_reports_by_reportid_retry | POST | /customer-geo-reports/{reportId}/retry | geo:report:create | — | 使用原请求与原幂等键恢复未完成的客户报告生成 |
 
-## cost（2）
-
-| 工具操作名 | 方法 | 路由 | 业务权限 | 幂等约束 | 描述 |
-|---|---|---|---|---|---|
-| get_budget_buckets | GET | /budget/buckets | geo:budget:view | — | 预算桶（S13） |
-| get_expense_ledger | GET | /expense-ledger | geo:budget:view | — | 费用台账（S13） |
-
 ## article-card（5）
 
 | 工具操作名 | 方法 | 路由 | 业务权限 | 幂等约束 | 描述 |
@@ -231,6 +232,8 @@ OpenAPI SHA-256：`d2fab6d270b61592e40951d86edc54d9a2e8aa74912b0a2048d772f90e6b0
 | POST | /oss-images/admin/{ossId}/rename | 该路径段 admin 在 07.projectApiTokens.excludedPathSegments 中排除 |
 | DELETE | /oss-images/admin/{ossId} | 该路径段 admin 在 07.projectApiTokens.excludedPathSegments 中排除 |
 | DELETE | /content-generation-tasks/{id} | 该权限不在 07.projectApiTokens.allowedScopes 中 |
+| POST | /article-versions/{id}/restore | OpenAPI 未允许 GEO 项目令牌认证 |
+| POST | /article-versions/archive-stale | OpenAPI 未允许 GEO 项目令牌认证 |
 | POST | /publish-targets | 该权限不在 07.projectApiTokens.allowedScopes 中 |
 | PUT | /publish-targets/{id} | 该权限不在 07.projectApiTokens.allowedScopes 中 |
 | POST | /publish-targets/{id}/enable | 该权限不在 07.projectApiTokens.allowedScopes 中 |

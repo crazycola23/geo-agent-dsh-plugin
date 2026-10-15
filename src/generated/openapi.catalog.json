@@ -2,7 +2,7 @@
   "catalogVersion": 2,
   "source": {
     "file": "scrm-specs/30-contracts/08-openapi.yaml",
-    "sha256": "d2fab6d270b61592e40951d86edc54d9a2e8aa74912b0a2048d772f90e6b0664"
+    "sha256": "f189c48a0c5278328bfa774847bded534c1f00f31391fde351c5dd139567c206"
   },
   "serverPath": "/geo",
   "securitySchemes": {
@@ -3170,8 +3170,8 @@
       "method": "POST",
       "path": "/article-versions/{id}/archive",
       "tag": "content",
-      "summary": "归档文章",
-      "description": "将父 Article 标记为已归档；请求携带父 Article.version CAS，不物理删除文章、版本或发布记录。归档后主文章列表默认不返回，已归档视图返回 archivedAt。重复归档按幂等成功返回。",
+      "summary": "归档稿件版本",
+      "description": "把该 ArticleVersion 标记为已归档（写 version 级 archived_at / archived_by）；请求携带父 Article.version CAS，不物理删除文章、版本或发布记录。归档后主文章列表默认不返回该版本，已归档视图返回 archivedAt。同一 Article 的其他版本不受影响；重复归档按幂等成功返回。",
       "permission": "geo:content:create",
       "idempotencyRule": "required: source Article + archive + version",
       "parameters": [
@@ -4164,6 +4164,92 @@
       "permission": "geo:publish:view",
       "idempotencyRule": null,
       "parameters": [],
+      "requestBody": null,
+      "hasJsonResponse": true
+    },
+    "get_publish_bill": {
+      "name": "get_publish_bill",
+      "method": "GET",
+      "path": "/publish-bill",
+      "tag": "cost",
+      "summary": "渠道账单（S13 B 区）",
+      "description": "S13 B 区读面：按渠道 + 时间范围列出消费明细，并给出合计。\n数据源是 geo_expense_ledger_entry（金额权威），LEFT JOIN geo_publish_record 仅用于补出\n媒体名、稿件标题与订单状态；不新增表、不新增枚举，沿用 S13 页面码 geo:budget:view。\n金额一律取台账 amount（charge/refund/reversal/reserve），不得用 publish_record.quoted_amount\n冒充消费金额（BR-COST-002）；退款/冲正独立成行，netAmount 只是合计视图。\n本接口读本地账，不设快易播 get_order_list 的「近 15 天」窗口，也不调用第三方。\n金额字段按 GeoAmountVisibility 裁剪（T-OPEN-29），无码时整字段不返回。\n",
+      "permission": "geo:budget:view",
+      "idempotencyRule": null,
+      "parameters": [
+        {
+          "name": "pageNum",
+          "in": "query",
+          "required": false,
+          "description": "",
+          "schema": {
+            "type": "integer",
+            "default": 1
+          },
+          "style": "form",
+          "explode": true
+        },
+        {
+          "name": "pageSize",
+          "in": "query",
+          "required": false,
+          "description": "",
+          "schema": {
+            "type": "integer",
+            "default": 10,
+            "maximum": 100
+          },
+          "style": "form",
+          "explode": true
+        },
+        {
+          "name": "projectId",
+          "in": "query",
+          "required": false,
+          "description": "",
+          "schema": {
+            "type": "string"
+          },
+          "style": "form",
+          "explode": true
+        },
+        {
+          "name": "provider",
+          "in": "query",
+          "required": false,
+          "description": "渠道 code，如 kuaiyibo；缺省为全部渠道",
+          "schema": {
+            "type": "string",
+            "maxLength": 64
+          },
+          "style": "form",
+          "explode": true
+        },
+        {
+          "name": "from",
+          "in": "query",
+          "required": false,
+          "description": "费用发生时间下界（含），yyyy-MM-dd",
+          "schema": {
+            "type": "string",
+            "format": "date"
+          },
+          "style": "form",
+          "explode": true
+        },
+        {
+          "name": "to",
+          "in": "query",
+          "required": false,
+          "description": "费用发生时间上界（含当日），yyyy-MM-dd",
+          "schema": {
+            "type": "string",
+            "format": "date"
+          },
+          "style": "form",
+          "explode": true
+        }
+      ],
       "requestBody": null,
       "hasJsonResponse": true
     },
@@ -8912,6 +8998,18 @@
       "path": "/content-generation-tasks/{id}",
       "summary": "删除已停用内容生成任务",
       "reason": "该权限不在 07.projectApiTokens.allowedScopes 中"
+    },
+    {
+      "method": "POST",
+      "path": "/article-versions/{id}/restore",
+      "summary": "恢复稿件版本",
+      "reason": "OpenAPI 未允许 GEO 项目令牌认证"
+    },
+    {
+      "method": "POST",
+      "path": "/article-versions/archive-stale",
+      "summary": "批量归档历史稿件版本",
+      "reason": "OpenAPI 未允许 GEO 项目令牌认证"
     },
     {
       "method": "POST",
