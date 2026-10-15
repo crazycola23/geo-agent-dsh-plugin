@@ -13,3 +13,8 @@ node_modules/
 lib/*.bak*
 *.bak.*
 package.json.bak*
+
+# 安装与配置文档：里面写着模型服务的真实密钥，只线下分发给使用者，永远不进仓库。
+# 配图同理（包含登录二维码与真实界面截图）。
+docs/安装与配置.md
+docs/images/
